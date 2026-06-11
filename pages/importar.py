@@ -103,3 +103,11 @@ def render():
             st.text(f"{status} {imp['archivo']} — {fmt_date(imp.get('fecha'))} — {imp['registros']} registros")
     else:
         st.info("No hay importaciones previas.")
+
+
+# Support direct execution via Streamlit multi-page auto-discovery
+if __name__ == "__main__":
+    st.set_page_config(page_title="Importar - Flujo de Caja", layout="wide")
+    from core.auth import require_auth
+    require_auth()
+    render()

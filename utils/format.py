@@ -3,14 +3,15 @@ from datetime import date, datetime
 
 
 def fmt_money(val) -> str:
-    """Format a monetary value as Colombian pesos (no decimals): $1,234,567"""
+    """Format a monetary value as Colombian pesos (no decimals): $1.234.567"""
     if val is None:
         return "$0"
     try:
         num = int(round(float(val)))
     except (ValueError, TypeError):
         return "$0"
-    return f"${num:,}".replace(",", ".") if False else f"${num:,}"
+    # Colombian format: periods as thousands separator
+    return f"${num:,}".replace(",", ".")
 
 
 def fmt_date(val) -> str:

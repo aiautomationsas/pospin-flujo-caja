@@ -144,3 +144,11 @@ def render():
             st.markdown(header)
             if comp.get("descripcion"):
                 st.caption(comp["descripcion"])
+
+
+# Support direct execution via Streamlit multi-page auto-discovery
+if __name__ == "__main__":
+    st.set_page_config(page_title="Compromisos - Flujo de Caja", layout="wide")
+    from core.auth import require_auth
+    require_auth()
+    render()

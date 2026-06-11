@@ -236,3 +236,11 @@ def _render_egresos(client, semana_id, semana):
                 st.info("📊 Proyección actualizada. Ve al Dashboard para ver los cambios.")
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
+
+
+# Support direct execution via Streamlit multi-page auto-discovery
+if __name__ == "__main__":
+    st.set_page_config(page_title="Actualizar - Flujo de Caja", layout="wide")
+    from core.auth import require_auth
+    require_auth()
+    render()

@@ -197,3 +197,11 @@ def _render_usuarios():
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error: {e}")
+
+
+# Support direct execution via Streamlit multi-page auto-discovery
+if __name__ == "__main__":
+    st.set_page_config(page_title="Configuración - Flujo de Caja", layout="wide")
+    from core.auth import require_auth
+    require_auth()
+    render()
