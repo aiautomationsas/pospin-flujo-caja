@@ -1,0 +1,238 @@
+"""Actualización semanal de datos — saldos, recaudos, egresos."""
+import streamlit as st
+from datetime import date, timedelta
+from core.auth import check_role
+from core.database import get_client
+from utils.format import fmt_money
+
+
+def render():
+    st.title("📝 Actualización Semanal")
+
+    if not check_role(["admin", "editor"]):
+        st.warning("🔒 Solo lectura — necesitas rol de editor o administrador para actualizar datos.")
+        st.stop()
+
+    client = get_client()
+
+    # ── Step 1: Select week ──
+    st.subheader("1. Selecciona la semana")
+
+    semanas_resp = client.table("semanas").select("*").order("fecha_inicio", desc=True).limit(52).execute()
+    if not semanas_resp.data:
+        st.info("No hay semanas registradas. Importa datos primero.")
+        st.stop()
+
+    # Default to current week
+    today = date.today()
+    iso = today.isocalendar()
+    current_semana_num = iso[1]
+    current_anio = iso[0]
+
+    semana_options = {}
+    default_idx = 0
+    for i, s in enumerate(semanas_resp.data):
+        label = f"Semana {s['numero']} ({s['fecha_inicio']} - {s['fecha_fin']})"
+        semana_options[label] = s
+        if s["numero"] == current_semana_num and s["anio"] == current_anio:
+            default_idx = i
+
+    selected_label = st.selectbox(
+        "Semana",
+        list(semana_options.keys()),
+        index=min(default_idx, len(semana_options) - 1),
+    )
+    selected_semana = semana_options[selected_label]
+    semana_id = selected_semana["id"]
+
+    # ── Step 2: Tabs ──
+    st.subheader("2. Ingresa los datos")
+    tab_saldos, tab_recaudos, tab_egresos = st.tabs([
+        "Saldos Bancarios", "Recaudos", "Egresos"
+    ])
+
+    with tab_saldos:
+        _render_saldos(client, semana_id, selected_semana)
+
+    with tab_recaudos:
+        _render_recaudos(client, semana_id, selected_semana)
+
+    with tab_egresos:
+        _render_egresos(client, semana_id, selected_semana)
+
+
+def _render_saldos(client, semana_id, semana):
+    """Tab: Saldos Bancarios."""
+    cuentas_resp = client.table("cuentas").select("*").eq("activa", True).order("nombre").execute()
+    if not cuentas_resp.data:
+        st.info("No hay cuentas bancarias activas. Configúralas en ⚙️ Configuración.")
+        return
+
+    st.markdown(f"**Semana {semana['numero']}** — Ingresa el saldo actual de cada cuenta.")
+
+    with st.form("form_saldos"):
+        saldos = {}
+        for cuenta in cuentas_resp.data:
+            # Get existing saldo if any
+            existing = client.table("saldos_semanales").select("saldo").eq(
+                "semana_id", semana_id
+            ).eq("cuenta_id", cuenta["id"]).execute()
+            default_val = float(existing.data[0]["saldo"]) if existing.data else 0.0
+
+            saldos[cuenta["id"]] = st.number_input(
+                f"{cuenta['nombre']} ({cuenta['banco']} - {cuenta['numero']})",
+                min_value=-1e15,
+                value=default_val,
+                step=1000000.0,
+                format="%.0f",
+                key=f"saldo_{cuenta['id']}",
+            )
+
+        if st.form_submit_button("💾 Guardar Saldos"):
+            try:
+                for cuenta_id, saldo in saldos.items():
+                    # Upsert: check if exists
+                    existing = client.table("saldos_semanales").select("id").eq(
+                        "semana_id", semana_id
+                    ).eq("cuenta_id", cuenta_id).execute()
+                    if existing.data:
+                        client.table("saldos_semanales").update(
+                            {"saldo": saldo}
+                        ).eq("id", existing.data[0]["id"]).execute()
+                    else:
+                        client.table("saldos_semanales").insert({
+                            "semana_id": semana_id,
+                            "cuenta_id": cuenta_id,
+                            "saldo": saldo,
+                        }).execute()
+                st.success("✅ Saldos guardados correctamente.")
+                st.info("📊 Proyección actualizada. Ve al Dashboard para ver los cambios.")
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
+
+
+def _render_recaudos(client, semana_id, semana):
+    """Tab: Recaudos."""
+    # Get pending/partial invoices
+    facturas_resp = client.table("facturas").select(
+        "id,numero,valor,cliente_id",
+        "clientes(nombre)",
+    ).in_("estado", ["pendiente", "parcial"]).execute()
+
+    if not facturas_resp.data:
+        st.info("No hay facturas pendientes de recaudo.")
+        return
+
+    st.markdown(f"**Semana {semana['numero']}** — Registra un recaudo.")
+
+    # Build factura options
+    factura_options = {}
+    for f in facturas_resp.data:
+        cliente_info = f.get("clientes", {})
+        if isinstance(cliente_info, dict):
+            cliente_nombre = cliente_info.get("nombre", "Desconocido")
+        else:
+            cliente_nombre = "Desconocido"
+        label = f"{cliente_nombre} - Factura {f['numero']} - {fmt_money(f['valor'])}"
+        factura_options[label] = f
+
+    with st.form("form_recaudos"):
+        selected_factura_label = st.selectbox(
+            "Factura",
+            list(factura_options.keys()),
+            key="factura_select",
+        )
+        selected_factura = factura_options[selected_factura_label]
+
+        valor_recaudo = st.number_input(
+            "Valor recaudado",
+            min_value=0.0,
+            value=0.0,
+            step=1000000.0,
+            format="%.0f",
+            key="recaudo_valor",
+        )
+        fecha_recaudo = st.date_input(
+            "Fecha del recaudo",
+            value=date.today(),
+            key="recaudo_fecha",
+        )
+
+        if st.form_submit_button("💾 Guardar Recaudo"):
+            if valor_recaudo <= 0:
+                st.warning("El valor debe ser mayor a 0.")
+            else:
+                try:
+                    client.table("recaudos").insert({
+                        "semana_id": semana_id,
+                        "factura_id": selected_factura["id"],
+                        "valor": valor_recaudo,
+                        "fecha": fecha_recaudo.isoformat(),
+                    }).execute()
+                    st.success("✅ Recaudo registrado correctamente.")
+                    st.info("📊 Proyección actualizada. Ve al Dashboard para ver los cambios.")
+                except Exception as e:
+                    st.error(f"Error al guardar: {e}")
+
+
+def _render_egresos(client, semana_id, semana):
+    """Tab: Egresos."""
+    categorias_resp = client.table("categorias_egreso").select("*").eq("activa", True).order("nombre").execute()
+    if not categorias_resp.data:
+        st.info("No hay categorías de egreso activas. Configúralas en ⚙️ Configuración.")
+        return
+
+    st.markdown(f"**Semana {semana['numero']}** — Ingresa los egresos por categoría.")
+
+    with st.form("form_egresos"):
+        egresos = {}
+        for cat in categorias_resp.data:
+            # Get existing egreso if any
+            existing = client.table("egresos").select("valor,descripcion").eq(
+                "semana_id", semana_id
+            ).eq("categoria_id", cat["id"]).execute()
+            default_val = float(existing.data[0]["valor"]) if existing.data else 0.0
+            default_desc = existing.data[0].get("descripcion", "") if existing.data else ""
+
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                egresos[cat["id"]] = {
+                    "valor": st.number_input(
+                        f"{cat['nombre']} ({cat['tipo']})",
+                        min_value=0.0,
+                        value=default_val,
+                        step=1000000.0,
+                        format="%.0f",
+                        key=f"egreso_val_{cat['id']}",
+                    ),
+                    "descripcion": st.text_input(
+                        "Descripción",
+                        value=default_desc,
+                        key=f"egreso_desc_{cat['id']}",
+                    ),
+                }
+
+        if st.form_submit_button("💾 Guardar Egresos"):
+            try:
+                for categoria_id, data in egresos.items():
+                    if data["valor"] <= 0:
+                        continue
+                    existing = client.table("egresos").select("id").eq(
+                        "semana_id", semana_id
+                    ).eq("categoria_id", categoria_id).execute()
+                    record = {
+                        "valor": data["valor"],
+                        "descripcion": data["descripcion"] or None,
+                    }
+                    if existing.data:
+                        client.table("egresos").update(record).eq(
+                            "id", existing.data[0]["id"]
+                        ).execute()
+                    else:
+                        record["semana_id"] = semana_id
+                        record["categoria_id"] = categoria_id
+                        client.table("egresos").insert(record).execute()
+                st.success("✅ Egresos guardados correctamente.")
+                st.info("📊 Proyección actualizada. Ve al Dashboard para ver los cambios.")
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
