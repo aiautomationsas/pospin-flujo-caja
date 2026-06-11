@@ -75,7 +75,7 @@ def export_pdf(proyeccion_data: list[dict], saldos_cuenta: list[dict], recaudo_p
 
     # Title
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "Flujo de Caja Proyectado — Grupo Pospin", ln=True, align="C")
+    pdf.cell(0, 10, "Flujo de Caja Proyectado - Grupo Pospin", ln=True, align="C")
 
     # Date
     pdf.set_font("Helvetica", "", 10)
@@ -144,7 +144,7 @@ def export_pdf(proyeccion_data: list[dict], saldos_cuenta: list[dict], recaudo_p
         pdf.ln(5)
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(255, 0, 0)
-        pdf.cell(0, 8, "⚠ ALERTAS — Semanas con Déficit", ln=True)
+        pdf.cell(0, 8, "ALERTAS - Semanas con Deficit", ln=True)
         pdf.set_font("Helvetica", "", 9)
         for d in deficits:
             pdf.cell(0, 6,

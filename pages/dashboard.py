@@ -141,3 +141,11 @@ def render():
             mime="application/pdf",
             use_container_width=True,
         )
+
+
+# Support direct execution via Streamlit multi-page auto-discovery
+if __name__ == "__main__":
+    st.set_page_config(page_title="Dashboard - Flujo de Caja", layout="wide")
+    from core.auth import require_auth
+    require_auth()
+    render()
