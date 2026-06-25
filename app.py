@@ -40,7 +40,7 @@ with st.sidebar:
     # Navigation
     page = st.radio(
         "Navegación",
-        ["Dashboard", "Actualizar", "Importar", "Compromisos", "Configuración"],
+        ["Dashboard", "Facturas", "Actualizar", "Importar", "Compromisos", "Configuración"],
         label_visibility="collapsed",
     )
 
@@ -57,6 +57,9 @@ with st.sidebar:
 if page == "Dashboard":
     from pages.dashboard import render
     render()
+elif page == "Facturas":
+    from pages.facturas import render as render_facturas
+    render_facturas()
 elif page == "Actualizar":
     from pages.actualizar import render as render_actualizar
     render_actualizar()

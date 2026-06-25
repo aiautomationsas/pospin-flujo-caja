@@ -111,19 +111,79 @@ def _render_saldos(client, semana_id, semana):
                 st.error(f"Error al guardar: {e}")
 
 
+def _actualizar_estado_factura(client, factura_id: int) -> None:
+    """Recalcula y persiste el estado de una factura según sus recaudos acumulados."""
+    factura_resp = client.table("facturas").select("valor").eq("id", factura_id).execute()
+    if not factura_resp.data:
+        return
+    valor_total = float(factura_resp.data[0]["valor"])
+
+    recaudos_resp = client.table("recaudos").select("valor").eq("factura_id", factura_id).execute()
+    total_recaudado = sum(float(r["valor"]) for r in (recaudos_resp.data or []))
+
+    if total_recaudado <= 0:
+        nuevo_estado = "pendiente"
+    elif total_recaudado >= valor_total:
+        nuevo_estado = "pagada"
+    else:
+        nuevo_estado = "parcial"
+
+    client.table("facturas").update({"estado": nuevo_estado}).eq("id", factura_id).execute()
+
+
 def _render_recaudos(client, semana_id, semana):
     """Tab: Recaudos."""
-    # Get pending/partial invoices
+    # Get pending/partial invoices for new recaudo form
     facturas_resp = client.table("facturas").select(
-        "id,numero,valor,cliente_id",
-        "clientes(nombre)",
+        "id,numero,valor,cliente_id,clientes(nombre)",
     ).in_("estado", ["pendiente", "parcial"]).execute()
+
+    # ── Recaudos existentes de esta semana ──
+    st.markdown(f"**Semana {semana['numero']}** — Recaudos registrados")
+
+    recaudos_semana_resp = client.table("recaudos").select(
+        "id,valor,fecha,factura_id,facturas(numero,valor,clientes(nombre))"
+    ).eq("semana_id", semana_id).order("fecha").execute()
+
+    recaudos_existentes = recaudos_semana_resp.data or []
+
+    if recaudos_existentes:
+        cols_hdr = st.columns([2, 1, 2, 2, 1])
+        for col, hdr in zip(cols_hdr, ["Cliente", "Factura", "Fecha", "Valor", ""]):
+            col.markdown(f"**{hdr}**")
+
+        for rec in recaudos_existentes:
+            factura_data = rec.get("facturas") or {}
+            cliente_data = (factura_data.get("clientes") or {})
+            cliente_nombre = cliente_data.get("nombre", "—") if isinstance(cliente_data, dict) else "—"
+            factura_numero = factura_data.get("numero", "—") if isinstance(factura_data, dict) else "—"
+
+            cols = st.columns([2, 1, 2, 2, 1])
+            cols[0].text(cliente_nombre)
+            cols[1].text(factura_numero)
+            cols[2].text(str(rec["fecha"]))
+            cols[3].text(fmt_money(rec["valor"]))
+            with cols[4]:
+                if st.button("🗑️", key=f"del_recaudo_{rec['id']}", help="Eliminar recaudo"):
+                    try:
+                        factura_id_afectada = rec["factura_id"]
+                        client.table("recaudos").delete().eq("id", rec["id"]).execute()
+                        _actualizar_estado_factura(client, factura_id_afectada)
+                        st.success("Recaudo eliminado y estado de factura actualizado.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Error al eliminar: {exc}")
+    else:
+        st.info("No hay recaudos registrados para esta semana.")
+
+    st.markdown("---")
+
+    # ── Nuevo recaudo ──
+    st.markdown("**Registrar nuevo recaudo**")
 
     if not facturas_resp.data:
         st.info("No hay facturas pendientes de recaudo.")
         return
-
-    st.markdown(f"**Semana {semana['numero']}** — Registra un recaudo.")
 
     # Build factura options
     factura_options = {}
@@ -169,8 +229,11 @@ def _render_recaudos(client, semana_id, semana):
                         "valor": valor_recaudo,
                         "fecha": fecha_recaudo.isoformat(),
                     }).execute()
-                    st.success("✅ Recaudo registrado correctamente.")
-                    st.info("📊 Proyección actualizada. Ve al Dashboard para ver los cambios.")
+                    # Recalcular estado de la factura automáticamente
+                    _actualizar_estado_factura(client, selected_factura["id"])
+                    st.success("✅ Recaudo registrado y estado de factura actualizado.")
+                    st.info("📊 Ve al Dashboard para ver los cambios.")
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
 

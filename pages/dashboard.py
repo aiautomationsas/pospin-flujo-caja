@@ -58,12 +58,20 @@ def render():
         line=dict(color="#1f77b4", width=3),
         marker=dict(size=8),
     ))
-    # Red zone for negative values
-    fig.add_hrect(y0=-1e15, y1=0, fillcolor="red", opacity=0.08, line_width=0)
+    # Red zone for negative values — bounded to data range
+    min_saldo = min(saldos)
+    max_saldo = max(saldos)
+    padding = max(abs(max_saldo), abs(min_saldo)) * 0.15 or 5_000_000
+    y_min = min(min_saldo - padding, -padding)
+    y_max = max_saldo + padding
+
+    if min_saldo < 0:
+        fig.add_hrect(y0=y_min, y1=0, fillcolor="red", opacity=0.08, line_width=0)
     fig.add_hline(y=0, line_dash="dash", line_color="gray")
     fig.update_layout(
         xaxis_title="Semana",
         yaxis_title="Saldo (COP)",
+        yaxis=dict(range=[y_min, y_max]),
         height=400,
         margin=dict(l=20, r=20, t=30, b=20),
         hovermode="x unified",
