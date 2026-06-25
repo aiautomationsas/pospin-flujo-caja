@@ -136,7 +136,7 @@ def _render_recaudos(client, semana_id, semana):
     # Get pending/partial invoices for new recaudo form
     facturas_resp = client.table("facturas").select(
         "id,numero,valor,cliente_id,clientes(nombre)",
-    ).in_("estado", ["pendiente", "parcial"]).execute()
+    ).in_("estado", ["pendiente", "parcial", "vencida"]).execute()
 
     # ── Recaudos existentes de esta semana ──
     st.markdown(f"**Semana {semana['numero']}** — Recaudos registrados")
