@@ -49,6 +49,14 @@ def render():
     labels = [semana_label(p["semana"], p["anio"]) for p in proyeccion]
     saldos = [p["saldo_final"] for p in proyeccion]
 
+    min_saldo = min(saldos)
+    max_saldo = max(saldos)
+    padding = max(abs(max_saldo), abs(min_saldo)) * 0.15 or 5_000_000
+    y_min = min(min_saldo - padding, -padding)
+    y_max = max_saldo + padding
+
+    colors = ["#d62728" if s < 0 else "#1f77b4" for s in saldos]
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=labels,
@@ -56,22 +64,13 @@ def render():
         mode="lines+markers",
         name="Saldo Proyectado",
         line=dict(color="#1f77b4", width=3),
-        marker=dict(size=8),
+        marker=dict(size=10, color=colors),
     ))
-    # Red zone for negative values — bounded to data range
-    min_saldo = min(saldos)
-    max_saldo = max(saldos)
-    padding = max(abs(max_saldo), abs(min_saldo)) * 0.15 or 5_000_000
-    y_min = min(min_saldo - padding, -padding)
-    y_max = max_saldo + padding
-
-    if min_saldo < 0:
-        fig.add_hrect(y0=y_min, y1=0, fillcolor="red", opacity=0.08, line_width=0)
     fig.add_hline(y=0, line_dash="dash", line_color="gray")
     fig.update_layout(
         xaxis_title="Semana",
         yaxis_title="Saldo (COP)",
-        yaxis=dict(range=[y_min, y_max]),
+        yaxis=dict(range=[y_min, y_max], tickformat=",.0f"),
         height=400,
         margin=dict(l=20, r=20, t=30, b=20),
         hovermode="x unified",
