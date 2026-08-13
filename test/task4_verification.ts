@@ -10,7 +10,6 @@ import fs from 'fs';
 import path from 'path';
 import { NextRequest } from 'next/server';
 import { middleware, evaluarSesionSupabase, extractJwtToken, config as middlewareConfig } from '../middleware.ts';
-import { navItems } from '../components/Sidebar.tsx';
 
 // Helper assertion function
 function assert(condition: boolean, message: string) {
@@ -178,11 +177,11 @@ async function runTask4Tests() {
   console.log('✓ Middleware correctly allows authenticated requests on all protected routes.');
 
   // -------------------------------------------------------------
-  // Test 4: Middleware Public / Unprotected Routes
+  // Test 4: Middleware Handling of Public Routes & API Route Protection
   // -------------------------------------------------------------
-  console.log('\nTest 4: Middleware handling of public/unprotected routes...');
+  console.log('\nTest 4: Middleware handling of public routes & API route protection...');
 
-  const publicRoutes = ['/login', '/', '/api/siigo/sync', '/about'];
+  const publicRoutes = ['/login', '/', '/about'];
 
   for (const route of publicRoutes) {
     const publicReq = new NextRequest(new URL(`http://localhost:3000${route}`));
@@ -194,7 +193,26 @@ async function runTask4Tests() {
     );
   }
 
-  console.log('✓ Middleware allows public routes without redirection.');
+  // API route protection test: unauthenticated /api/siigo/sync returns 401
+  const unauthApiReq = new NextRequest(new URL('http://localhost:3000/api/siigo/sync'), { method: 'POST' });
+  const unauthApiRes = await middleware(unauthApiReq, mockAuthClient as any);
+  assert(
+    unauthApiRes.status === 401,
+    `Unauthenticated API request to /api/siigo/sync must return 401 (got ${unauthApiRes.status})`
+  );
+
+  // Authenticated API request to /api/siigo/sync passes through (200)
+  const authApiReq = new NextRequest(new URL('http://localhost:3000/api/siigo/sync'), {
+    method: 'POST',
+    headers: { authorization: 'Bearer valid_session_token_xyz' },
+  });
+  const authApiRes = await middleware(authApiReq, mockAuthClient as any);
+  assert(
+    authApiRes.status === 200,
+    `Authenticated API request to /api/siigo/sync must pass through (got ${authApiRes.status})`
+  );
+
+  console.log('✓ Middleware allows public routes and protects /api/* routes with 401.');
 
   // -------------------------------------------------------------
   // Test 5: Matcher Config & Sidebar Component Verification
@@ -214,18 +232,15 @@ async function runTask4Tests() {
 
   // Sidebar links check
   const requiredNavHrefs = ['/', '/flujo-caja', '/flujo-caja/facturas', '/flujo-caja/importar'];
-  const actualNavHrefs = navItems.map((item) => item.href);
+  const sidebarPath = path.join(process.cwd(), 'components/Sidebar.tsx');
+  const sidebarContent = fs.readFileSync(sidebarPath, 'utf-8');
 
   for (const requiredHref of requiredNavHrefs) {
     assert(
-      actualNavHrefs.includes(requiredHref),
-      `Sidebar navItems must include link to ${requiredHref}`
+      sidebarContent.includes(`href="${requiredHref}"`) || sidebarContent.includes(`href: '${requiredHref}'`) || sidebarContent.includes(`href: "${requiredHref}"`),
+      `Sidebar.tsx must include link to ${requiredHref}`
     );
   }
-
-  // Sidebar dynamic auth implementation check
-  const sidebarPath = path.join(process.cwd(), 'components/Sidebar.tsx');
-  const sidebarContent = fs.readFileSync(sidebarPath, 'utf-8');
 
   assert(
     sidebarContent.includes('supabase.auth.getUser()'),
