@@ -1,13 +1,16 @@
+# Node & Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.egg-info/
-dist/
-build/
-*.egg
-.eggs/
 
 # Virtual environments
 .venv/
@@ -17,6 +20,7 @@ env/
 # Environment
 .env
 .env.local
+.env*.local
 
 # IDE
 .vscode/
