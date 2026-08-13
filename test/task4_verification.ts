@@ -8,7 +8,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { NextRequest } from 'next/server';
+import { NextRequest } from 'next/server.js';
 import { middleware, evaluarSesionSupabase, extractJwtToken, config as middlewareConfig } from '../middleware.ts';
 
 // Helper assertion function

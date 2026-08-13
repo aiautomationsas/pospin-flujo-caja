@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server.js';
 import { supabase } from './lib/supabaseClient.ts';
 
 /**
