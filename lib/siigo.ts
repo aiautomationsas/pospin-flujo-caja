@@ -366,3 +366,6 @@ export async function sincronizarCarteraSiigo(
     throw error;
   }
 }
+
+export const syncSiigoCartera = sincronizarCarteraSiigo;
+
