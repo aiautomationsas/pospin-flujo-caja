@@ -1,16 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { supabase } from './lib/supabaseClient';
 
 /**
- * Evaluates whether a request contains a valid Supabase authentication session.
- * Checks:
- * 1. Authorization header (Bearer token)
- * 2. Supabase auth cookies (e.g. sb-access-token, sb-*-auth-token, supabase-auth-token)
+ * Extracts a candidate JWT token from either the Authorization Bearer header
+ * or Supabase authentication cookies (e.g. sb-access-token, sb-*-auth-token, supabase-auth-token).
  */
-export function evaluarSesionSupabase(request: NextRequest): boolean {
+export function extractJwtToken(request: NextRequest): string | null {
   // Check Authorization header
   const authHeader = request.headers.get('authorization');
-  if (authHeader && authHeader.toLowerCase().startsWith('bearer ') && authHeader.trim().length > 15) {
-    return true;
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (token.length > 0) {
+      return token;
+    }
   }
 
   // Check Supabase session cookies
@@ -21,29 +23,77 @@ export function evaluarSesionSupabase(request: NextRequest): boolean {
       name === 'sb-access-token' ||
       name === 'supabase-auth-token' ||
       name.startsWith('sb-') ||
-      name.includes('auth-token')
+      name.includes('auth-token') ||
+      name.includes('access_token')
     ) {
-      if (cookie.value && cookie.value.trim().length > 0) {
-        return true;
+      const val = cookie.value?.trim();
+      if (!val) continue;
+
+      // If raw JWT (starts with eyJ)
+      if (val.startsWith('eyJ')) {
+        return val;
+      }
+
+      // If stored as JSON string object or array
+      try {
+        const parsed = JSON.parse(val);
+        if (typeof parsed === 'string' && parsed.startsWith('eyJ')) {
+          return parsed;
+        }
+        if (Array.isArray(parsed) && typeof parsed[0] === 'string' && parsed[0].startsWith('eyJ')) {
+          return parsed[0];
+        }
+        if (parsed && typeof parsed === 'object' && typeof parsed.access_token === 'string') {
+          return parsed.access_token;
+        }
+      } catch {
+        // Fallback for non-JSON token string
+        if (val.length > 15) {
+          return val;
+        }
       }
     }
   }
 
-  return false;
+  return null;
+}
+
+/**
+ * Evaluates whether a request contains a valid Supabase authentication session
+ * by performing real token validation using `supabase.auth.getUser(jwtToken)`.
+ */
+export async function evaluarSesionSupabase(
+  request: NextRequest,
+  client = supabase
+): Promise<boolean> {
+  const jwtToken = extractJwtToken(request);
+  if (!jwtToken) {
+    return false;
+  }
+
+  try {
+    const { data, error } = await client.auth.getUser(jwtToken);
+    if (error || !data || !data.user) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Middleware protecting `/flujo-caja/*` routes with Supabase Auth.
  * Redirects unauthenticated requests to `/login`.
  */
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest, client = supabase) {
   const { pathname } = request.nextUrl;
 
   // Protect /flujo-caja and all sub-routes (/flujo-caja/*)
   const isProtectedPath = pathname === '/flujo-caja' || pathname.startsWith('/flujo-caja/');
 
   if (isProtectedPath) {
-    const isAuthenticated = evaluarSesionSupabase(request);
+    const isAuthenticated = await evaluarSesionSupabase(request, client);
 
     if (!isAuthenticated) {
       const loginUrl = new URL('/login', request.url);
@@ -61,3 +111,4 @@ export const config = {
     '/flujo-caja/:path*',
   ],
 };
+

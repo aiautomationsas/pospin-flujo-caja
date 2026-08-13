@@ -1,8 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { supabase } from '../lib/supabaseClient';
+import type { User } from '@supabase/supabase-js';
 
 export interface NavItem {
   name: string;
@@ -54,6 +56,51 @@ export const navItems: NavItem[] = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function getInitialUser() {
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        if (isMounted && currentUser) {
+          setUser(currentUser);
+        }
+      } catch (err) {
+        console.error('Error fetching Supabase auth user:', err);
+      }
+    }
+
+    getInitialUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { user: User | null } | null) => {
+      if (isMounted) {
+        setUser(session?.user ?? null);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleLogout = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsLoggingOut(true);
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Error during Supabase auth sign out:', err);
+    } finally {
+      setUser(null);
+      setIsLoggingOut(false);
+      router.push('/login');
+    }
+  };
 
   const isActive = (item: NavItem) => {
     if (!pathname) return false;
@@ -62,6 +109,21 @@ export default function Sidebar() {
     }
     return pathname.startsWith(item.href);
   };
+
+  // Derive dynamic user display details
+  const userEmail = user?.email || 'usuario@pospin.com';
+  const userName =
+    (user?.user_metadata?.full_name as string) ||
+    (user?.user_metadata?.name as string) ||
+    (user?.email ? user.email.split('@')[0] : 'Usuario POSPIN');
+  const userInitials = userName
+    .split(' ')
+    .filter(Boolean)
+    .map((n: string) => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'US';
+
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between p-4 border-r border-slate-800 shrink-0">
@@ -103,24 +165,27 @@ export default function Sidebar() {
       {/* Footer / User Profile */}
       <div className="pt-4 border-t border-slate-800">
         <div className="flex items-center space-x-3 px-2 py-2">
-          <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-200">
-            US
+          <div className="w-8 h-8 rounded-full bg-indigo-700 flex items-center justify-center text-xs font-bold text-slate-100">
+            {userInitials}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-slate-200 truncate">Usuario POSPIN</p>
-            <p className="text-xs text-slate-400 truncate">usuario@pospin.com</p>
+            <p className="text-xs font-semibold text-slate-200 truncate">{userName}</p>
+            <p className="text-xs text-slate-400 truncate">{userEmail}</p>
           </div>
         </div>
-        <Link
-          href="/login"
-          className="mt-2 w-full flex items-center justify-center space-x-2 px-3 py-1.5 rounded text-xs font-medium text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+          className="mt-2 w-full flex items-center justify-center space-x-2 px-3 py-1.5 rounded text-xs font-medium text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors disabled:opacity-50"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
           </svg>
-          <span>Cerrar Sesión</span>
-        </Link>
+          <span>{isLoggingOut ? 'Cerrando sesión...' : 'Cerrar Sesión'}</span>
+        </button>
       </div>
     </aside>
   );
 }
+

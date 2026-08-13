@@ -1,7 +1,7 @@
 /**
  * Automated Verification Suite for Task 4:
  * - Supabase Auth Middleware protection (`middleware.ts`)
- * - Session evaluation logic (`evaluarSesionSupabase`)
+ * - Token extraction and JWT verification (`extractJwtToken` & `evaluarSesionSupabase`)
  * - Sidebar Navigation Component (`components/Sidebar.tsx`)
  * - Environment Variable Template (`.env.example`)
  */
@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import { NextRequest } from 'next/server';
-import { middleware, evaluarSesionSupabase, config as middlewareConfig } from '../middleware.ts';
+import { middleware, evaluarSesionSupabase, extractJwtToken, config as middlewareConfig } from '../middleware.ts';
 import { navItems } from '../components/Sidebar.tsx';
 
 // Helper assertion function
@@ -19,58 +19,107 @@ function assert(condition: boolean, message: string) {
   }
 }
 
+// Mock Supabase Auth Client for Unit Testing
+const mockAuthClient = {
+  auth: {
+    getUser: async (jwtToken: string) => {
+      if (
+        jwtToken === 'valid_jwt_token_12345' ||
+        jwtToken === 'valid_session_token_xyz' ||
+        jwtToken.startsWith('eyJhbGciOiJIUzI1Ni')
+      ) {
+        return {
+          data: {
+            user: {
+              id: 'mock-user-uuid-12345',
+              email: 'usuario@pospin.com',
+              user_metadata: { full_name: 'Usuario POSPIN' },
+            },
+          },
+          error: null,
+        };
+      }
+      return { data: { user: null }, error: new Error('Invalid JWT signature or expired token') };
+    },
+  },
+};
+
 async function runTask4Tests() {
   console.log('=== Starting Task 4 Verification Suite ===\n');
 
   // -------------------------------------------------------------
-  // Test 1: evaluarSesionSupabase Unit Tests
+  // Test 1: extractJwtToken & evaluarSesionSupabase Unit Tests
   // -------------------------------------------------------------
-  console.log('Test 1: evaluarSesionSupabase session evaluation...');
+  console.log('Test 1: extractJwtToken and evaluarSesionSupabase JWT verification...');
 
-  // 1a. No session cookies or header -> false
+  // 1a. No session cookies or header -> extractJwtToken returns null, evaluarSesionSupabase returns false
   const reqNoSession = new NextRequest(new URL('http://localhost:3000/flujo-caja'));
   assert(
-    evaluarSesionSupabase(reqNoSession) === false,
+    extractJwtToken(reqNoSession) === null,
+    'extractJwtToken should return null when no auth cookie or header is present'
+  );
+  assert(
+    (await evaluarSesionSupabase(reqNoSession, mockAuthClient as any)) === false,
     'evaluarSesionSupabase should return false when no auth cookie or header is present'
   );
 
-  // 1b. Bearer Authorization header -> true
+  // 1b. Bearer Authorization header -> valid JWT verification -> true
   const reqBearerHeader = new NextRequest(new URL('http://localhost:3000/flujo-caja'), {
     headers: { authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.validtoken' },
   });
   assert(
-    evaluarSesionSupabase(reqBearerHeader) === true,
-    'evaluarSesionSupabase should return true for valid Bearer token in authorization header'
+    extractJwtToken(reqBearerHeader) === 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.validtoken',
+    'extractJwtToken should extract token from Bearer header'
+  );
+  assert(
+    (await evaluarSesionSupabase(reqBearerHeader, mockAuthClient as any)) === true,
+    'evaluarSesionSupabase should return true for valid Bearer token'
   );
 
-  // 1c. Standard Supabase access token cookie -> true
+  // 1c. Standard Supabase access token cookie -> valid JWT verification -> true
   const reqAccessTokenCookie = new NextRequest(new URL('http://localhost:3000/flujo-caja'), {
-    headers: { cookie: 'sb-access-token=sb_mock_access_token_12345' },
+    headers: { cookie: 'sb-access-token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.validtoken' },
   });
   assert(
-    evaluarSesionSupabase(reqAccessTokenCookie) === true,
-    'evaluarSesionSupabase should return true for sb-access-token cookie'
+    (await evaluarSesionSupabase(reqAccessTokenCookie, mockAuthClient as any)) === true,
+    'evaluarSesionSupabase should return true for valid sb-access-token cookie'
   );
 
-  // 1d. Project-specific Supabase auth token cookie -> true
+  // 1d. Project-specific Supabase auth token cookie (JSON format) -> true
   const reqProjectAuthCookie = new NextRequest(new URL('http://localhost:3000/flujo-caja'), {
-    headers: { cookie: 'sb-xyzcompany-auth-token={"access_token":"mock_jwt"}' },
+    headers: {
+      cookie:
+        'sb-xyzcompany-auth-token={"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.validtoken"}',
+    },
   });
   assert(
-    evaluarSesionSupabase(reqProjectAuthCookie) === true,
-    'evaluarSesionSupabase should return true for sb-*-auth-token cookie'
+    extractJwtToken(reqProjectAuthCookie) === 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.validtoken',
+    'extractJwtToken should extract access_token from JSON cookie'
+  );
+  assert(
+    (await evaluarSesionSupabase(reqProjectAuthCookie, mockAuthClient as any)) === true,
+    'evaluarSesionSupabase should return true for JSON auth cookie containing valid JWT'
   );
 
-  // 1e. Empty/Whitespace cookie value -> false
+  // 1e. Empty / Whitespace cookie value -> false
   const reqEmptyCookie = new NextRequest(new URL('http://localhost:3000/flujo-caja'), {
     headers: { cookie: 'sb-access-token=   ' },
   });
   assert(
-    evaluarSesionSupabase(reqEmptyCookie) === false,
+    (await evaluarSesionSupabase(reqEmptyCookie, mockAuthClient as any)) === false,
     'evaluarSesionSupabase should return false for empty/whitespace cookie value'
   );
 
-  console.log('✓ evaluarSesionSupabase unit tests passed.');
+  // 1f. SECURITY TEST: Fake / Invalid / Tampered token string -> false
+  const reqFakeToken = new NextRequest(new URL('http://localhost:3000/flujo-caja'), {
+    headers: { cookie: 'sb-access-token=fake_unauthorized_token_123' },
+  });
+  assert(
+    (await evaluarSesionSupabase(reqFakeToken, mockAuthClient as any)) === false,
+    'SECURITY CHECK: evaluarSesionSupabase MUST return false for fake/invalid JWT tokens'
+  );
+
+  console.log('✓ extractJwtToken & evaluarSesionSupabase unit tests passed.');
 
   // -------------------------------------------------------------
   // Test 2: Middleware Route Protection (Unauthenticated)
@@ -86,7 +135,7 @@ async function runTask4Tests() {
 
   for (const route of protectedRoutes) {
     const unauthReq = new NextRequest(new URL(`http://localhost:3000${route}`));
-    const res = middleware(unauthReq);
+    const res = await middleware(unauthReq, mockAuthClient as any);
 
     assert(
       res.status === 307 || res.status === 302,
@@ -100,7 +149,8 @@ async function runTask4Tests() {
     );
 
     assert(
-      redirectLocation !== null && redirectLocation.includes(`redirectTo=${encodeURIComponent(route)}`),
+      redirectLocation !== null &&
+        redirectLocation.includes(`redirectTo=${encodeURIComponent(route)}`),
       `Redirect URL should preserve intended destination path in search params`
     );
   }
@@ -116,7 +166,7 @@ async function runTask4Tests() {
     const authReq = new NextRequest(new URL(`http://localhost:3000${route}`), {
       headers: { cookie: 'sb-access-token=valid_session_token_xyz' },
     });
-    const res = middleware(authReq);
+    const res = await middleware(authReq, mockAuthClient as any);
 
     // NextResponse.next() returns a 200 response without redirect headers
     assert(
@@ -136,7 +186,7 @@ async function runTask4Tests() {
 
   for (const route of publicRoutes) {
     const publicReq = new NextRequest(new URL(`http://localhost:3000${route}`));
-    const res = middleware(publicReq);
+    const res = await middleware(publicReq, mockAuthClient as any);
 
     assert(
       res.status === 200 && res.headers.get('location') === null,
@@ -147,9 +197,9 @@ async function runTask4Tests() {
   console.log('✓ Middleware allows public routes without redirection.');
 
   // -------------------------------------------------------------
-  // Test 5: Matcher Config & Sidebar Links Verification
+  // Test 5: Matcher Config & Sidebar Component Verification
   // -------------------------------------------------------------
-  console.log('\nTest 5: Sidebar navigation items & matcher config...');
+  console.log('\nTest 5: Matcher config & Sidebar dynamic auth integration...');
 
   // Matcher rules check
   assert(
@@ -157,7 +207,8 @@ async function runTask4Tests() {
     'middleware config.matcher must be an array with at least 2 pattern definitions'
   );
   assert(
-    middlewareConfig.matcher.includes('/flujo-caja') && middlewareConfig.matcher.includes('/flujo-caja/:path*'),
+    middlewareConfig.matcher.includes('/flujo-caja') &&
+      middlewareConfig.matcher.includes('/flujo-caja/:path*'),
     'middleware config.matcher must include /flujo-caja and /flujo-caja/:path*'
   );
 
@@ -172,7 +223,24 @@ async function runTask4Tests() {
     );
   }
 
-  console.log('✓ Matcher config and Sidebar navigation links verified.');
+  // Sidebar dynamic auth implementation check
+  const sidebarPath = path.join(process.cwd(), 'components/Sidebar.tsx');
+  const sidebarContent = fs.readFileSync(sidebarPath, 'utf-8');
+
+  assert(
+    sidebarContent.includes('supabase.auth.getUser()'),
+    'Sidebar.tsx must call supabase.auth.getUser() to fetch user state'
+  );
+  assert(
+    sidebarContent.includes('onAuthStateChange'),
+    'Sidebar.tsx must register onAuthStateChange session listener'
+  );
+  assert(
+    sidebarContent.includes('supabase.auth.signOut()'),
+    'Sidebar.tsx must call supabase.auth.signOut() on logout'
+  );
+
+  console.log('✓ Matcher config and Sidebar dynamic auth integration verified.');
 
   // -------------------------------------------------------------
   // Test 6: Environment Variables Template (.env.example)
@@ -210,3 +278,4 @@ runTask4Tests().catch((err) => {
   console.error('\n❌ Task 4 Verification Suite Failed:', err);
   process.exit(1);
 });
+
