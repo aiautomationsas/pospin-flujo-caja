@@ -102,6 +102,18 @@ export async function middleware(request: NextRequest, client = supabase) {
     }
   }
 
+  // Protect /api/* routes (e.g. /api/siigo/sync)
+  const isApiPath = pathname.startsWith('/api/');
+  if (isApiPath) {
+    const isAuthenticated = await evaluarSesionSupabase(request, client);
+    if (!isAuthenticated) {
+      return NextResponse.json(
+        { error: 'No autorizado. Se requiere sesión activa de Supabase.' },
+        { status: 401 }
+      );
+    }
+  }
+
   return NextResponse.next();
 }
 
@@ -109,6 +121,8 @@ export const config = {
   matcher: [
     '/flujo-caja',
     '/flujo-caja/:path*',
+    '/api/:path*',
   ],
 };
+
 
