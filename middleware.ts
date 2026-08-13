@@ -89,6 +89,12 @@ export async function evaluarSesionSupabase(
 export async function middleware(request: NextRequest, client = supabase) {
   const { pathname } = request.nextUrl;
 
+  // Allow bypass for initial testing without login requirements
+  const disableAuth = process.env.NEXT_PUBLIC_DISABLE_AUTH === 'true' || process.env.DISABLE_AUTH === 'true';
+  if (disableAuth) {
+    return NextResponse.next();
+  }
+
   // Protect /flujo-caja and all sub-routes (/flujo-caja/*)
   const isProtectedPath = pathname === '/flujo-caja' || pathname.startsWith('/flujo-caja/');
 
