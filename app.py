@@ -31,44 +31,46 @@ if not get_current_user():
 # ── Authenticated: sidebar navigation ──
 user = get_current_user()
 
-with st.sidebar:
-    st.title("💰 Grupo Pospin")
-    st.markdown(f"**{user['full_name'] or user['email']}**")
-    st.caption(f"Rol: {user['role'].capitalize()}")
-    st.markdown("---")
+if user:
+    with st.sidebar:
+        st.title("💰 Grupo Pospin")
+        st.markdown(f"**{user.get('full_name') or user.get('email', '')}**")
+        st.caption(f"Rol: {str(user.get('role', '')).capitalize()}")
+        st.markdown("---")
 
-    # Navigation
-    page = st.radio(
-        "Navegación",
-        ["Dashboard", "Obligaciones", "Facturas", "Actualizar", "Importar", "Configuración"],
-        label_visibility="collapsed",
-    )
+        # Navigation
+        page = st.radio(
+            "Navegación",
+            ["Dashboard", "Obligaciones", "Facturas", "Actualizar", "Importar", "Configuración"],
+            label_visibility="collapsed",
+        )
 
-    # Hide Configuración for non-admin users
-    if user["role"] != "admin" and page == "Configuración":
-        page = "Dashboard"
+        # Hide Configuración for non-admin users
+        if user.get("role") != "admin" and page == "Configuración":
+            page = "Dashboard"
 
-    st.markdown("---")
-    if st.button("Cerrar Sesión"):
-        logout()
-        st.rerun()
+        st.markdown("---")
+        if st.button("Cerrar Sesión"):
+            logout()
+            st.rerun()
 
-# ── Page routing ──
-if page == "Dashboard":
-    from pages.dashboard import render
-    render()
-elif page == "Obligaciones":
-    from pages.obligaciones import render as render_obligaciones
-    render_obligaciones()
-elif page == "Facturas":
-    from pages.facturas import render as render_facturas
-    render_facturas()
-elif page == "Actualizar":
-    from pages.actualizar import render as render_actualizar
-    render_actualizar()
-elif page == "Importar":
-    from pages.importar import render as render_importar
-    render_importar()
-elif page == "Configuración":
-    from pages.configuracion import render as render_configuracion
-    render_configuracion()
+    # ── Page routing ──
+    if page == "Dashboard":
+        from pages.dashboard import render
+        render()
+    elif page == "Obligaciones":
+        from pages.obligaciones import render as render_obligaciones
+        render_obligaciones()
+    elif page == "Facturas":
+        from pages.facturas import render as render_facturas
+        render_facturas()
+    elif page == "Actualizar":
+        from pages.actualizar import render as render_actualizar
+        render_actualizar()
+    elif page == "Importar":
+        from pages.importar import render as render_importar
+        render_importar()
+    elif page == "Configuración":
+        from pages.configuracion import render as render_configuracion
+        render_configuracion()
+
