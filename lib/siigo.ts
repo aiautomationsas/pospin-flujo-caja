@@ -322,6 +322,7 @@ function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string
 
 /**
  * Sincroniza facturas y clientes desde SIIGO a Supabase en lote ultra-optimizado.
+ * Extrae correctamente `balance` y `payments[0].due_date` desde el payload oficial de SIIGO API v1.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
@@ -435,10 +436,28 @@ export async function sincronizarCarteraSiigo(
       const numeroCompleto = prefix ? `${prefix}${number}` : number;
 
       const valor = Number(fSiigo.total || 0);
-      const balance = Number(fSiigo.due?.balance !== undefined ? fSiigo.due.balance : valor);
-      const fechaEmision = fSiigo.date;
-      const fechaVencimiento = fSiigo.due?.date || fechaEmision;
 
+      // Extraer saldo pendiente real (balance) desde la raíz del objeto de SIIGO
+      let balance = valor;
+      if (typeof fSiigo.balance === 'number') {
+        balance = fSiigo.balance;
+      } else if (fSiigo.due && typeof (fSiigo.due as unknown as Record<string, unknown>).balance === 'number') {
+        balance = Number((fSiigo.due as unknown as Record<string, unknown>).balance);
+      }
+
+      // Extraer fecha de vencimiento real desde la lista de pagos/cuotas (payments[0].due_date)
+      const fechaEmision = fSiigo.date;
+      let fechaVencimiento = fechaEmision;
+      if (Array.isArray(fSiigo.payments) && fSiigo.payments.length > 0) {
+        const p0 = fSiigo.payments[0] as Record<string, unknown>;
+        if (p0 && typeof p0.due_date === 'string' && p0.due_date.trim()) {
+          fechaVencimiento = p0.due_date.trim();
+        }
+      } else if (fSiigo.due && typeof (fSiigo.due as unknown as Record<string, unknown>).date === 'string') {
+        fechaVencimiento = String((fSiigo.due as unknown as Record<string, unknown>).date);
+      }
+
+      // Determinar estado contable de la factura
       let estado: 'pagada' | 'parcial' | 'vencida' | 'pendiente';
       if (balance <= 0) {
         estado = 'pagada';

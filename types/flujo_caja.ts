@@ -316,7 +316,9 @@ export interface SiigoInvoice {
   date: string;
   customer: SiigoCustomer;
   total: number;
-  due: SiigoInvoiceDue;
+  balance?: number;
+  due?: SiigoInvoiceDue;
+  payments?: Array<Record<string, unknown>>;
 }
 
 export interface SiigoSyncStats {
