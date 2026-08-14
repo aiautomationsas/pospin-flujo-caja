@@ -33,7 +33,6 @@ export default function ImportarPage() {
   });
 
   const [diasAtras, setDiasAtras] = useState<number>(365); // 1 año por defecto
-  const [resetData, setResetData] = useState<boolean>(true); // Limpiar datos demo por defecto para carga limpia
   const [showAdvancedCredentials, setShowAdvancedCredentials] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [testingApi, setTestingApi] = useState(false);
@@ -186,16 +185,14 @@ export default function ImportarPage() {
     }
   }
 
-  async function handleSyncSiigo(e?: React.FormEvent, forceReset?: boolean) {
+  async function handleSyncSiigo(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setSyncStats(null);
     setSyncing(true);
 
-    const shouldReset = forceReset !== undefined ? forceReset : resetData;
-
     const payload: Record<string, unknown> = {
       dias_atras: diasAtras,
-      resetData: shouldReset,
+      resetData: false,
     };
     if (credentials.username.trim()) payload.username = credentials.username.trim();
     if (credentials.access_key.trim()) payload.access_key = credentials.access_key.trim();
@@ -348,16 +345,6 @@ export default function ImportarPage() {
                       : `Rango activo: Facturas emitidas entre el ${new Date(Date.now() - diasAtras * 86400000).toLocaleDateString('es-CO')} y el ${new Date().toLocaleDateString('es-CO')}.`}
                   </span>
                 </p>
-
-                <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer pt-2 border-t border-border/60">
-                  <input
-                    type="checkbox"
-                    checked={resetData}
-                    onChange={(e) => setResetData(e.target.checked)}
-                    className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary"
-                  />
-                  <span>Limpiar facturas anteriores/demo antes de guardar datos reales de SIIGO</span>
-                </label>
               </div>
 
               {apiTestMsg && (
