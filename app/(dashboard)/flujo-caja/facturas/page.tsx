@@ -19,16 +19,13 @@ export default function FacturasPage() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filtros
   const [activeTab, setActiveTab] = useState<EstadoFactura | 'todas'>('todas');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Modales
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showRecaudoModal, setShowRecaudoModal] = useState(false);
   const [selectedFactura, setSelectedFactura] = useState<FacturaConCliente | null>(null);
 
-  // Form State: Nueva Factura
   const [newFactura, setNewFactura] = useState({
     cliente_nombre: '',
     numero: '',
@@ -38,7 +35,6 @@ export default function FacturasPage() {
     valor: '',
   });
 
-  // Form State: Registrar Recaudo
   const [recaudoInput, setRecaudoInput] = useState({
     valor: '',
     fecha: new Date().toISOString().split('T')[0],
@@ -47,7 +43,6 @@ export default function FacturasPage() {
 
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Cargar facturas y clientes desde Supabase
   useEffect(() => {
     fetchFacturas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -56,13 +51,11 @@ export default function FacturasPage() {
   async function fetchFacturas() {
     setLoading(true);
     try {
-      // 1. Cargar Clientes
       const { data: clientesData } = await supabase.from('clientes').select('*');
       if (clientesData && clientesData.length > 0) {
         setClientes(clientesData);
       }
 
-      // 2. Cargar Facturas con Recaudos
       const { data: facturasData, error } = await supabase
         .from('facturas')
         .select(`
@@ -308,22 +301,22 @@ export default function FacturasPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans overflow-x-hidden">
       <FlujoCajaSubNav />
 
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 pb-16 flex-1">
-        {/* Header de Gestión de Facturas */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+      <main className="container mx-auto px-3 sm:px-6 lg:px-8 pb-16 flex-1 max-w-7xl">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className="p-2 bg-primary/10 text-primary rounded-xl">
-                <Receipt className="w-6 h-6" />
+              <span className="p-2 bg-primary/10 text-primary rounded-xl shrink-0">
+                <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
               </span>
-              <h1 className="text-3xl font-extrabold text-primary tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-primary tracking-tight">
                 Gestión de Facturas y Cartera
               </h1>
             </div>
-            <p className="text-muted-foreground text-sm">
+            <p className="text-muted-foreground text-xs sm:text-sm">
               Administre cuentas por cobrar, estados de cartera y registro de recaudos.
             </p>
           </div>
@@ -331,47 +324,47 @@ export default function FacturasPage() {
           <Button
             onClick={() => setShowCreateModal(true)}
             variant="secondary"
-            className="shadow-md hover:shadow-lg transition-all font-semibold flex items-center gap-2 self-start sm:self-auto"
+            className="w-full sm:w-auto shadow-md hover:shadow-lg transition-all font-semibold flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
             <span>Nueva Factura</span>
           </Button>
         </div>
 
-        {/* Tarjetas KPI de Cartera */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
-          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {/* Tarjetas KPI de Cartera Responsive */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 mb-6 sm:mb-8">
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-4 sm:p-5 shadow-sm">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Total Facturado
             </span>
-            <div className="text-2xl font-black font-mono text-foreground mt-1">
+            <div className="text-xl sm:text-2xl font-black font-mono text-foreground mt-1">
               {formatCOP(totalFacturado)}
             </div>
           </div>
 
-          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
-            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-4 sm:p-5 shadow-sm">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
               Total Recaudado
             </span>
-            <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+            <div className="text-xl sm:text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-1">
               {formatCOP(totalRecaudado)}
             </div>
           </div>
 
-          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
-            <span className="text-xs font-semibold uppercase tracking-wider text-primary">
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-4 sm:p-5 shadow-sm">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-primary">
               Pendiente por Recaudar
             </span>
-            <div className="text-2xl font-black font-mono text-primary mt-1">
+            <div className="text-xl sm:text-2xl font-black font-mono text-primary mt-1">
               {formatCOP(totalPendiente)}
             </div>
           </div>
 
-          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
-            <span className="text-xs font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-4 sm:p-5 shadow-sm">
+            <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">
               Facturas Vencidas
             </span>
-            <div className="text-2xl font-black font-mono text-rose-600 dark:text-rose-400 mt-1">
+            <div className="text-xl sm:text-2xl font-black font-mono text-rose-600 dark:text-rose-400 mt-1">
               {facturasVencidas.length}{' '}
               <span className="text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
                 ({formatCOP(facturasVencidas.reduce((a, b) => a + (b.saldo_pendiente || 0), 0))})
@@ -381,8 +374,8 @@ export default function FacturasPage() {
         </div>
 
         {/* Barra de Filtros y Búsqueda */}
-        <div className="bg-card border border-border rounded-2xl p-4 mb-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-1.5 bg-muted p-1 rounded-xl border border-border">
+        <div className="bg-card border border-border rounded-2xl p-3 sm:p-4 mb-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+          <div className="flex items-center gap-1.5 bg-muted p-1 rounded-xl border border-border overflow-x-auto no-scrollbar w-full md:w-auto">
             {(
               [
                 { key: 'todas', label: 'Todas' },
@@ -401,7 +394,7 @@ export default function FacturasPage() {
                 <button
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                  className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap min-h-[36px] ${
                     isActive
                       ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground hover:bg-accent'
@@ -424,10 +417,10 @@ export default function FacturasPage() {
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Buscar por cliente o factura..."
+              placeholder="Buscar cliente o factura..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+              className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-xl text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all"
             />
           </div>
         </div>
@@ -437,19 +430,19 @@ export default function FacturasPage() {
           {loading ? (
             <div className="py-12 text-center text-muted-foreground">
               <div className="inline-block w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-2" />
-              <p>Cargando facturas de cartera...</p>
+              <p className="text-xs sm:text-sm">Cargando facturas de cartera...</p>
             </div>
           ) : facturasFiltradas.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
-              <p className="text-base font-medium text-foreground">
+              <p className="text-sm sm:text-base font-medium text-foreground">
                 No se encontraron facturas con los filtros seleccionados
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+            <div className="overflow-x-auto -mx-3 sm:mx-0 px-3 sm:px-0">
+              <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead>
-                  <tr className="border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted/50">
+                  <tr className="border-b border-border text-[11px] font-semibold text-muted-foreground uppercase tracking-wider bg-muted/50">
                     <th className="py-3.5 px-4">Número</th>
                     <th className="py-3.5 px-4">Cliente</th>
                     <th className="py-3.5 px-4">Emisión</th>
@@ -461,36 +454,36 @@ export default function FacturasPage() {
                     <th className="py-3.5 px-4 text-center">Acciones</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border text-sm">
+                <tbody className="divide-y divide-border text-xs sm:text-sm">
                   {facturasFiltradas.map((f) => (
                     <tr
                       key={f.id}
                       className="hover:bg-accent/50 text-foreground transition-colors"
                     >
-                      <td className="py-3.5 px-4 font-bold font-mono text-primary">
+                      <td className="py-3.5 px-4 font-bold font-mono text-primary whitespace-nowrap">
                         {f.numero}
                       </td>
-                      <td className="py-3.5 px-4 font-medium text-foreground">
+                      <td className="py-3.5 px-4 font-medium text-foreground whitespace-nowrap">
                         {f.cliente?.nombre || 'Cliente sin nombre'}
                       </td>
-                      <td className="py-3.5 px-4 text-xs text-muted-foreground">
+                      <td className="py-3.5 px-4 text-[11px] text-muted-foreground whitespace-nowrap">
                         {formatFechaEsp(f.fecha_emision)}
                       </td>
-                      <td className="py-3.5 px-4 text-xs text-muted-foreground">
+                      <td className="py-3.5 px-4 text-[11px] text-muted-foreground whitespace-nowrap">
                         {formatFechaEsp(f.fecha_vencimiento)}
                       </td>
-                      <td className="py-3.5 px-4 text-xs text-primary font-medium">
+                      <td className="py-3.5 px-4 text-[11px] text-primary font-medium whitespace-nowrap">
                         {formatFechaEsp(f.fecha_estimada_recaudo)}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono text-muted-foreground">
+                      <td className="py-3.5 px-4 text-right font-mono text-muted-foreground whitespace-nowrap">
                         {formatCOP(f.valor)}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                      <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                         {formatCOP(f.saldo_pendiente || 0)}
                       </td>
-                      <td className="py-3.5 px-4 text-center">
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
                         <span
-                          className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
+                          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
                             f.estado === 'pagada'
                               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
                               : f.estado === 'parcial'
@@ -503,7 +496,7 @@ export default function FacturasPage() {
                           {f.estado.toUpperCase()}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
                         {f.estado !== 'pagada' ? (
                           <Button
                             size="sm"
@@ -517,7 +510,7 @@ export default function FacturasPage() {
                               });
                               setShowRecaudoModal(true);
                             }}
-                            className="text-xs font-semibold shadow-sm"
+                            className="text-xs font-semibold shadow-sm min-h-[34px]"
                           >
                             💰 Abonar
                           </Button>
@@ -537,15 +530,15 @@ export default function FacturasPage() {
 
         {/* Modal: Crear Nueva Factura */}
         {showCreateModal && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-scaleUp">
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-5 sm:p-6 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
-                <h3 className="text-xl font-bold text-primary flex items-center gap-2">
-                  <Plus className="w-5 h-5" /> Registrar Nueva Factura
+                <h3 className="text-lg sm:text-xl font-bold text-primary flex items-center gap-2">
+                  <Plus className="w-5 h-5" /> Registrar Factura
                 </h3>
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className="text-muted-foreground hover:text-foreground text-xl font-bold"
+                  className="text-muted-foreground hover:text-foreground text-xl font-bold p-1"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -557,7 +550,7 @@ export default function FacturasPage() {
                 </div>
               )}
 
-              <form onSubmit={handleCreateFactura} className="space-y-4 text-sm">
+              <form onSubmit={handleCreateFactura} className="space-y-4 text-xs sm:text-sm">
                 <div>
                   <label className="block text-xs font-medium text-foreground mb-1">
                     Nombre del Cliente *
@@ -574,7 +567,7 @@ export default function FacturasPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-foreground mb-1">
                       Número de Factura *
@@ -609,7 +602,7 @@ export default function FacturasPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-foreground mb-1">
                       Emisión
@@ -673,17 +666,17 @@ export default function FacturasPage() {
           </div>
         )}
 
-        {/* Modal: Registrar Abono / Recaudo */}
+        {/* Modal: Registrar Abono */}
         {showRecaudoModal && selectedFactura && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-6 shadow-2xl animate-scaleUp">
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5 sm:p-6 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
-                <h3 className="text-xl font-bold text-primary flex items-center gap-2">
+                <h3 className="text-lg sm:text-xl font-bold text-primary flex items-center gap-2">
                   <DollarSign className="w-5 h-5 text-emerald-600" /> Registrar Recaudo
                 </h3>
                 <button
                   onClick={() => setShowRecaudoModal(false)}
-                  className="text-muted-foreground hover:text-foreground text-xl font-bold"
+                  className="text-muted-foreground hover:text-foreground text-xl font-bold p-1"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -698,12 +691,12 @@ export default function FacturasPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Cliente:</span>
-                  <span className="text-foreground font-medium">
+                  <span className="text-foreground font-medium truncate max-w-[180px]">
                     {selectedFactura.cliente?.nombre}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Saldo Pendiente Actual:</span>
+                  <span className="text-muted-foreground">Saldo Pendiente:</span>
                   <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
                     {formatCOP(selectedFactura.saldo_pendiente || selectedFactura.valor)}
                   </span>
@@ -716,7 +709,7 @@ export default function FacturasPage() {
                 </div>
               )}
 
-              <form onSubmit={handleRegistrarRecaudo} className="space-y-4 text-sm">
+              <form onSubmit={handleRegistrarRecaudo} className="space-y-4 text-xs sm:text-sm">
                 <div>
                   <label className="block text-xs font-medium text-foreground mb-1">
                     Monto a Abonar ($ COP) *
@@ -730,7 +723,7 @@ export default function FacturasPage() {
                     onChange={(e) =>
                       setRecaudoInput({ ...recaudoInput, valor: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono text-base"
+                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm sm:text-base"
                   />
                 </div>
 
