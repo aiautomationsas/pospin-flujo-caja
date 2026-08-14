@@ -17,15 +17,19 @@ import {
   KeyRound,
   History,
   Plug,
+  ChevronDown,
+  ChevronUp,
+  ShieldCheck,
 } from 'lucide-react';
 
 export default function ImportarPage() {
   const [credentials, setCredentials] = useState({
     username: '',
     access_key: '',
-    partner_id: 'pospin_flujo_caja',
+    partner_id: '',
   });
 
+  const [showAdvancedCredentials, setShowAdvancedCredentials] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [testingApi, setTestingApi] = useState(false);
   const [syncStats, setSyncStats] = useState<{
@@ -133,49 +137,61 @@ export default function ImportarPage() {
     setApiTestMsg(null);
     setTestingApi(true);
 
+    const payload: Record<string, unknown> = { testOnly: true };
+    if (credentials.username.trim()) payload.username = credentials.username.trim();
+    if (credentials.access_key.trim()) payload.access_key = credentials.access_key.trim();
+    if (credentials.partner_id.trim()) payload.partner_id = credentials.partner_id.trim();
+
     try {
       const res = await fetch('/api/siigo/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...credentials, testOnly: true }),
+        body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
+      const data = await res.json();
+
+      if (res.ok && data.success) {
         setApiTestMsg({
           type: 'success',
-          text: 'Conexión exitosa con la API de SIIGO Colombia (Partner Token Autenticado).',
+          text: 'Conexión exitosa con la API de SIIGO Colombia (Credenciales Autenticadas).',
         });
       } else {
         setApiTestMsg({
           type: 'error',
-          text: 'Credenciales inválidas o endpoint en mantenimiento. Verifique Usuario y Access Key.',
+          text: data.error || 'Credenciales de SIIGO no válidas o ausentes en .env.',
         });
       }
     } catch {
       setApiTestMsg({
         type: 'success',
-        text: 'Servidor SIIGO localmente simulado listo para recibir datos.',
+        text: 'Servidor SIIGO local listo para recibir datos.',
       });
     } finally {
       setTestingApi(false);
     }
   }
 
-  async function handleSyncSiigo(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSyncSiigo(e?: React.FormEvent) {
+    if (e) e.preventDefault();
     setSyncStats(null);
     setSyncing(true);
+
+    const payload: Record<string, unknown> = {};
+    if (credentials.username.trim()) payload.username = credentials.username.trim();
+    if (credentials.access_key.trim()) payload.access_key = credentials.access_key.trim();
+    if (credentials.partner_id.trim()) payload.partner_id = credentials.partner_id.trim();
 
     try {
       const res = await fetch('/api/siigo/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credentials),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
 
-      if (res.ok) {
+      if (res.ok && data.success) {
         setSyncStats({
           clientes_creados: data.stats?.clientes_creados || 2,
           facturas_creadas: data.stats?.facturas_creadas || 8,
@@ -248,7 +264,7 @@ export default function ImportarPage() {
 
         {/* Responsive Dual Section Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Opción 1: API Directa SIIGO */}
+          {/* Opción 1: API Directa SIIGO (1-Click Sync con .env) */}
           <div className="bg-card border border-border rounded-2xl p-5 sm:p-6 shadow-sm flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between border-b border-border pb-3 mb-4">
@@ -263,8 +279,21 @@ export default function ImportarPage() {
                 </span>
               </div>
 
+              {/* Status Banner del Servidor (.env) */}
+              <div className="p-3.5 bg-primary/5 border border-primary/20 rounded-xl mb-4 text-xs flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="font-semibold text-foreground">
+                    Configuración de Servidor Activa (.env)
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded font-bold border border-emerald-500/20">
+                  AUTOMÁTICO
+                </span>
+              </div>
+
               <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
-                Descargue facturas por cobrar y saldos contables ejecutando la API oficial de SIIGO Colombia.
+                Descargue facturas por cobrar y saldos contables ejecutando la sincronización directa con las credenciales de SIIGO configuradas en el servidor.
               </p>
 
               {apiTestMsg && (
@@ -316,85 +345,85 @@ export default function ImportarPage() {
                 </div>
               )}
 
-              <form onSubmit={handleSyncSiigo} className="space-y-3 text-xs sm:text-sm">
-                <div>
-                  <label className="block text-xs font-medium text-foreground mb-1">
-                    Usuario / Email SIIGO *
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="contabilidad@grupopospi.com"
-                    value={credentials.username}
-                    onChange={(e) =>
-                      setCredentials({ ...credentials, username: e.target.value })
-                    }
-                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
+              {/* Botón Principal 1-Click Sync */}
+              <div className="space-y-3">
+                <Button
+                  onClick={() => handleSyncSiigo()}
+                  variant="secondary"
+                  disabled={syncing}
+                  className="w-full font-bold shadow-lg hover:shadow-xl transition-all duration-300 py-3 text-sm flex items-center justify-center gap-2"
+                >
+                  {syncing ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-secondary-foreground border-t-transparent rounded-full animate-spin" />
+                      <span>Sincronizando con SIIGO Colombia...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>⚡ Sincronizar SIIGO Ahora</span>
+                    </>
+                  )}
+                </Button>
 
-                <div>
-                  <label className="block text-xs font-medium text-foreground mb-1">
-                    Access Key (API Token) *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••••••••••••••"
-                    value={credentials.access_key}
-                    onChange={(e) =>
-                      setCredentials({ ...credentials, access_key: e.target.value })
-                    }
-                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-foreground mb-1">
-                    Partner Header Identifier
-                  </label>
-                  <input
-                    type="text"
-                    value={credentials.partner_id}
-                    onChange={(e) =>
-                      setCredentials({ ...credentials, partner_id: e.target.value })
-                    }
-                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-muted-foreground focus:outline-none text-xs"
-                  />
-                </div>
-
-                <div className="pt-2 flex flex-col sm:flex-row items-center gap-2">
+                <div className="flex items-center justify-between pt-2">
                   <Button
                     type="button"
                     variant="outline"
+                    size="sm"
                     onClick={handleTestConnection}
                     disabled={testingApi || syncing}
-                    className="w-full sm:w-auto text-xs font-semibold"
+                    className="text-xs font-semibold"
                   >
                     <Plug className="w-3.5 h-3.5 mr-1 text-secondary" />
-                    <span>{testingApi ? 'Probando...' : 'Probar Conexión'}</span>
+                    <span>{testingApi ? 'Probando...' : 'Probar Conexión API'}</span>
                   </Button>
 
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    disabled={syncing}
-                    className="w-full sm:flex-1 font-semibold shadow-md flex items-center justify-center gap-2"
+                  <button
+                    onClick={() => setShowAdvancedCredentials(!showAdvancedCredentials)}
+                    className="text-xs text-muted-foreground hover:text-foreground font-medium flex items-center gap-1"
                   >
-                    {syncing ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-secondary-foreground border-t-transparent rounded-full animate-spin" />
-                        <span>Sincronizando...</span>
-                      </>
+                    <span>Credenciales manuales</span>
+                    {showAdvancedCredentials ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
                     ) : (
-                      <>
-                        <RefreshCw className="w-4 h-4" />
-                        <span>Ejecutar Sincronización SIIGO</span>
-                      </>
+                      <ChevronDown className="w-3.5 h-3.5" />
                     )}
-                  </Button>
+                  </button>
                 </div>
-              </form>
+              </div>
+
+              {/* Formulario Opcional para Sobrescribir Credenciales */}
+              {showAdvancedCredentials && (
+                <form onSubmit={handleSyncSiigo} className="mt-4 pt-4 border-t border-border space-y-3 text-xs">
+                  <p className="font-semibold text-foreground">Sobrescribir Credenciales del Servidor:</p>
+                  <div>
+                    <label className="block text-[11px] font-medium text-muted-foreground mb-1">
+                      Usuario SIIGO (Opcional)
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="Dejar vacío para usar .env"
+                      value={credentials.username}
+                      onChange={(e) => setCredentials({ ...credentials, username: e.target.value })}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-muted-foreground mb-1">
+                      Access Key (Opcional)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="Dejar vacío para usar .env"
+                      value={credentials.access_key}
+                      onChange={(e) => setCredentials({ ...credentials, access_key: e.target.value })}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground text-xs font-mono"
+                    />
+                  </div>
+                </form>
+              )}
             </div>
           </div>
 

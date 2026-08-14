@@ -13,9 +13,13 @@ export async function POST(request: Request) {
     // Body opcional
   }
 
-  const username = (body.username as string) || process.env.SIIGO_USERNAME || '';
-  const accessKey = (body.access_key as string) || process.env.SIIGO_ACCESS_KEY || '';
-  const partnerId = (body.partner_id as string) || process.env.SIIGO_PARTNER_ID || 'pospin_flujo_caja';
+  const reqUsername = typeof body.username === 'string' ? body.username.trim() : '';
+  const reqAccessKey = typeof body.access_key === 'string' ? body.access_key.trim() : '';
+  const reqPartnerId = typeof body.partner_id === 'string' ? body.partner_id.trim() : '';
+
+  const username = reqUsername || process.env.SIIGO_USERNAME || '';
+  const accessKey = reqAccessKey || process.env.SIIGO_ACCESS_KEY || '';
+  const partnerId = reqPartnerId || process.env.SIIGO_PARTNER_ID || 'pospin_flujo_caja';
   const baseUrl = (body.base_url as string) || process.env.SIIGO_BASE_URL || 'https://api.siigo.com';
   const usuarioId = (body.usuario_id as string) || null;
   const isTestOnly = Boolean(body.testOnly);
@@ -24,7 +28,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         success: false,
-        error: 'Faltan credenciales de SIIGO (Se requiere Usuario y Access Key válidos).',
+        error: 'Faltan credenciales de SIIGO. Configure SIIGO_USERNAME y SIIGO_ACCESS_KEY en las variables de entorno (.env) del servidor o ingréselas en el formulario.',
       },
       { status: 400 }
     );
