@@ -261,7 +261,7 @@ export class SiigoAPIClient {
         recibos.push(...results);
 
         const totalResults = data.pagination?.total_results || 0;
-        if (recibos.length >= totalResults || page >= 10) {
+        if (recibos.length >= totalResults || page >= 15) {
           break;
         }
 
@@ -372,7 +372,7 @@ function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string
 
 /**
  * Sincroniza facturas y clientes desde SIIGO a Supabase en lote ultra-optimizado.
- * Cruzando también los Recibos de Caja (vouchers) para abonar facturas pagadas.
+ * Cruzando también los Recibos de Caja (vouchers items[].due.prefix + consecutive) para abonar facturas pagadas.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
@@ -397,19 +397,33 @@ export async function sincronizarCarteraSiigo(
     // Consultar Recibos de Caja (Vouchers) para cruzar pagos reales
     const recibosCaja = await siigoClient.consultarRecibosCaja().catch(() => []);
 
-    // Mapa de abonos/pagos acumulados por número de factura o id de factura
+    // Mapa de abonos/pagos acumulados por número de factura (due.prefix + due.consecutive o invoice.number)
     const abonosPorFactura = new Map<string, number>();
     for (const rc of recibosCaja) {
       const items = Array.isArray(rc.items) ? (rc.items as Record<string, unknown>[]) : [];
       for (const item of items) {
-        const inv = item.invoice as Record<string, unknown> | undefined;
         const val = Number(item.value || 0);
-        if (inv && val > 0) {
-          const num = String(inv.number || '');
-          const prefix = String(inv.prefix || '');
-          const numComp = prefix ? `${prefix}${num}` : num;
-          if (numComp) {
-            abonosPorFactura.set(numComp, (abonosPorFactura.get(numComp) || 0) + val);
+        if (val > 0) {
+          // Opción A: due object (due.prefix + due.consecutive)
+          const due = item.due as Record<string, unknown> | undefined;
+          if (due) {
+            const prefix = String(due.prefix || due.doc_prefix || '').trim();
+            const consecutive = String(due.consecutive || due.number || '').trim();
+            const numComp = prefix ? `${prefix}${consecutive}` : consecutive;
+            if (numComp) {
+              abonosPorFactura.set(numComp, (abonosPorFactura.get(numComp) || 0) + val);
+            }
+          }
+
+          // Opción B: invoice object (invoice.prefix + invoice.number)
+          const inv = item.invoice as Record<string, unknown> | undefined;
+          if (inv) {
+            const prefix = String(inv.prefix || '').trim();
+            const num = String(inv.number || '').trim();
+            const numComp = prefix ? `${prefix}${num}` : num;
+            if (numComp) {
+              abonosPorFactura.set(numComp, (abonosPorFactura.get(numComp) || 0) + val);
+            }
           }
         }
       }
