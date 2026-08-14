@@ -99,7 +99,8 @@ export async function POST(request: Request) {
       throw new Error('No se pudo conectar con la base de datos Supabase.');
     }
 
-    const stats = await sincronizarCarteraSiigo(supabase, siigoClient);
+    const diasAtras = Number(body.dias_atras) || 365;
+    const stats = await sincronizarCarteraSiigo(supabase, siigoClient, diasAtras);
 
     // Registrar log de sincronización exitosa
     try {

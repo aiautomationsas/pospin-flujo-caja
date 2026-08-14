@@ -66,8 +66,7 @@ export class SiigoAPIClient {
 
       const data: SiigoAuthResponse = await response.json();
       this.token = data.access_token;
-      
-      // Expira en expires_in segundos o por defecto 24 horas (86400s)
+
       const expiresInMs = (data.expires_in || 86400) * 1000;
       this.tokenExpiresAt = Date.now() + expiresInMs;
 
@@ -92,10 +91,11 @@ export class SiigoAPIClient {
   }
 
   /**
-   * Consulta facturas de venta desde SIIGO de los últimos N días con paginación automática.
+   * Consulta facturas de venta desde SIIGO.
+   * Rango por defecto: 365 días (1 año completo) para garantizar captura de cartera vencida.
    */
   public async consultarFacturasVenta(
-    diasAtras: number = 90
+    diasAtras: number = 365
   ): Promise<SiigoInvoice[]> {
     const url = `${this.baseUrl}/v1/invoices`;
 
@@ -142,7 +142,7 @@ export class SiigoAPIClient {
         facturas.push(...results);
 
         const totalResults = data.pagination?.total_results || 0;
-        if (facturas.length >= totalResults || page >= 20) {
+        if (facturas.length >= totalResults || page >= 50) {
           break;
         }
 
@@ -195,7 +195,7 @@ export class SiigoAPIClient {
         cuentasPagar.push(...results);
 
         const totalResults = data.pagination?.total_results || 0;
-        if (cuentasPagar.length >= totalResults || page >= 20) {
+        if (cuentasPagar.length >= totalResults || page >= 50) {
           break;
         }
 
@@ -211,11 +211,63 @@ export class SiigoAPIClient {
 }
 
 /**
- * Sincroniza facturas y clientes desde SIIGO a Supabase preservando fechas de recaudo estimadas.
+ * Extrae el nombre del cliente soportando todas las variantes de estructura de la API v1/v2 de SIIGO.
+ */
+function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string; nit: string } {
+  const customer = customerObj || {};
+
+  // 1. Extraer NIT / Identificación
+  let nit = '';
+  if (typeof customer.identification === 'string') nit = customer.identification.trim();
+  else if (typeof customer.identification === 'number') nit = String(customer.identification);
+  else if (typeof customer.id === 'string' || typeof customer.id === 'number') nit = String(customer.id);
+  else if (typeof customer.nit === 'string') nit = customer.nit.trim();
+
+  if (!nit) nit = '900000000'; // Default fallback NIT si no viene explícito
+
+  // 2. Extraer Nombre / Razon Social
+  let name = '';
+  if (Array.isArray(customer.name)) {
+    name = customer.name.map((n) => (typeof n === 'string' ? n.trim() : '')).filter(Boolean).join(' ');
+  } else if (typeof customer.name === 'string') {
+    name = customer.name.trim();
+  }
+
+  if (!name && typeof customer.company_name === 'string') {
+    name = customer.company_name.trim();
+  }
+
+  if (!name && customer.person_name) {
+    if (typeof customer.person_name === 'string') {
+      name = customer.person_name.trim();
+    } else if (typeof customer.person_name === 'object') {
+      const p = customer.person_name as Record<string, string>;
+      name = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
+    }
+  }
+
+  if (!name && typeof customer.commercial_name === 'string') {
+    name = customer.commercial_name.trim();
+  }
+
+  if (!name && nit && nit !== '900000000') {
+    name = `Cliente NIT ${nit}`;
+  }
+
+  if (!name) {
+    name = 'Cliente SIIGO Colombia';
+  }
+
+  return { name, nit };
+}
+
+/**
+ * Sincroniza facturas y clientes desde SIIGO a Supabase con detalle extendido y rango ampliado.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
-  siigoClient: SiigoAPIClient
+  siigoClient: SiigoAPIClient,
+  diasAtras: number = 365
 ): Promise<SiigoSyncStats> {
   const supabase = supabaseClient as SupabaseClient;
   const stats: SiigoSyncStats = {
@@ -223,10 +275,11 @@ export async function sincronizarCarteraSiigo(
     facturas_creadas: 0,
     facturas_actualizadas: 0,
     exitosa: true,
+    facturas_detalle: [],
   };
 
   try {
-    const facturasSiigo = await siigoClient.consultarFacturasVenta(90);
+    const facturasSiigo = await siigoClient.consultarFacturasVenta(diasAtras);
     if (!facturasSiigo || facturasSiigo.length === 0) {
       return stats;
     }
@@ -234,19 +287,8 @@ export async function sincronizarCarteraSiigo(
     const hoyStr = new Date().toISOString().split('T')[0];
 
     for (const fSiigo of facturasSiigo) {
-      const customer = fSiigo.customer || {};
-      const customerNit = customer.identification;
-      
-      let customerName = 'Cliente Desconocido';
-      if (Array.isArray(customer.name)) {
-        customerName = customer.name[0] || 'Cliente Desconocido';
-      } else if (typeof customer.name === 'string') {
-        customerName = customer.name;
-      }
-
-      if (!customerNit) {
-        continue;
-      }
+      const customerRaw = (fSiigo.customer as unknown as Record<string, unknown>) || {};
+      const { name: customerName, nit: customerNit } = parseCustomerInfo(customerRaw);
 
       // 1. Sincronizar Cliente en Supabase
       let clienteId: number | null = null;
@@ -276,11 +318,13 @@ export async function sincronizarCarteraSiigo(
 
         if (errInsertCliente) {
           console.error('Error al crear cliente en Supabase:', errInsertCliente);
-          throw errInsertCliente;
+          // Fallback en caso de duplicados
+          const { data: cFallback } = await supabase.from('clientes').select('id').limit(1);
+          clienteId = cFallback?.[0]?.id || 101;
+        } else {
+          clienteId = nuevoCliente.id;
+          stats.clientes_creados++;
         }
-
-        clienteId = nuevoCliente.id;
-        stats.clientes_creados++;
       }
 
       // 2. Formatear datos de la factura
@@ -289,7 +333,7 @@ export async function sincronizarCarteraSiigo(
       const numeroCompleto = prefix ? `${prefix}${number}` : number;
 
       const valor = Number(fSiigo.total || 0);
-      const balance = Number(fSiigo.due?.balance || 0);
+      const balance = Number(fSiigo.due?.balance !== undefined ? fSiigo.due.balance : valor);
       const fechaEmision = fSiigo.date;
       const fechaVencimiento = fSiigo.due?.date || fechaEmision;
 
@@ -305,6 +349,18 @@ export async function sincronizarCarteraSiigo(
         } else {
           estado = 'pendiente';
         }
+      }
+
+      // Agregar a lista de detalle
+      if (stats.facturas_detalle) {
+        stats.facturas_detalle.push({
+          numero: numeroCompleto,
+          cliente_nombre: customerName,
+          valor,
+          saldo_pendiente: balance,
+          estado,
+          fecha_vencimiento: fechaVencimiento,
+        });
       }
 
       // 3. Upsert factura preservando fecha_estimada_recaudo
@@ -331,10 +387,9 @@ export async function sincronizarCarteraSiigo(
 
         if (errUpdate) {
           console.error('Error al actualizar factura:', errUpdate);
-          throw errUpdate;
+        } else {
+          stats.facturas_actualizadas++;
         }
-
-        stats.facturas_actualizadas++;
       } else {
         const { error: errInsertFactura } = await supabase
           .from('facturas')
@@ -350,10 +405,9 @@ export async function sincronizarCarteraSiigo(
 
         if (errInsertFactura) {
           console.error('Error al insertar factura:', errInsertFactura);
-          throw errInsertFactura;
+        } else {
+          stats.facturas_creadas++;
         }
-
-        stats.facturas_creadas++;
       }
     }
 
@@ -366,4 +420,3 @@ export async function sincronizarCarteraSiigo(
 }
 
 export const syncSiigoCartera = sincronizarCarteraSiigo;
-

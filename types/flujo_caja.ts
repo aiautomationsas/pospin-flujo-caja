@@ -325,4 +325,12 @@ export interface SiigoSyncStats {
   facturas_actualizadas: number;
   exitosa: boolean;
   error?: string;
+  facturas_detalle?: Array<{
+    numero: string;
+    cliente_nombre: string;
+    valor: number;
+    saldo_pendiente: number;
+    estado: string;
+    fecha_vencimiento: string;
+  }>;
 }
