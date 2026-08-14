@@ -47,14 +47,28 @@ export async function POST(request: Request) {
 
   if (isDebug) {
     try {
-      const facturas = await siigoClient.consultarFacturasVenta(30);
-      const cuentasPagar = await siigoClient.consultarCuentasPorPagar().catch(() => []);
+      const facturas = await siigoClient.consultarFacturasVenta(0); // 0 = Todo el historial
+      const paidInvoices = facturas.filter((f) => Number(f.balance || 0) === 0);
+      const partialInvoices = facturas.filter((f) => Number(f.balance || 0) > 0 && Number(f.balance || 0) < Number(f.total || 0));
+      const unpaidInvoices = facturas.filter((f) => Number(f.balance || 0) === Number(f.total || 0));
+
+      const paymentsWithPaidKey = facturas.filter((f) =>
+        f.payments?.some((p) => (p as Record<string, unknown>).paid !== undefined)
+      );
+
       return NextResponse.json({
         success: true,
+        total_invoices_fetched: facturas.length,
+        summary: {
+          paid_count: paidInvoices.length,
+          partial_count: partialInvoices.length,
+          unpaid_count: unpaidInvoices.length,
+          payments_with_paid_flag_count: paymentsWithPaidKey.length,
+        },
         sample_invoice: facturas[0] || null,
-        sample_keys: facturas[0] ? Object.keys(facturas[0]) : [],
-        sample_cuentas_pagar: cuentasPagar[0] || null,
-        total_invoices_sample: facturas.length,
+        sample_paid_invoice: paidInvoices[0] || null,
+        sample_partial_invoice: partialInvoices[0] || null,
+        sample_payment_object: facturas[0]?.payments?.[0] || null,
       });
     } catch (err) {
       return NextResponse.json({ success: false, error: (err as Error).message }, { status: 500 });
