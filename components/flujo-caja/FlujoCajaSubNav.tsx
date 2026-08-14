@@ -30,7 +30,7 @@ export default function FlujoCajaSubNav() {
   ];
 
   return (
-    <div className="w-full bg-card border-b border-border shadow-sm mb-4 sm:mb-6 sticky top-16 z-40 backdrop-blur-md bg-card/95">
+    <div className="w-full bg-card border-b border-border shadow-sm mb-4 sm:mb-6">
       <div className="container mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between min-h-[52px] py-1.5 gap-2">
           {/* Tag de Marca */}
