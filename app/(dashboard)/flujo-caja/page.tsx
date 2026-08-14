@@ -33,6 +33,7 @@ import {
   Wallet,
   Download,
   ShieldCheck,
+  Calendar,
 } from 'lucide-react';
 
 export default function FlujoCajaDashboardPage() {
@@ -425,6 +426,9 @@ export default function FlujoCajaDashboardPage() {
                 </span>
                 <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium">
                   <ShieldCheck className="w-3 h-3" /> Modelo Auditado
+                </span>
+                <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs bg-amber-500/20 text-amber-200 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-medium">
+                  <Calendar className="w-3 h-3 text-amber-400" /> Período SIIGO: Cartera Histórica Completa
                 </span>
               </div>
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight leading-tight">
