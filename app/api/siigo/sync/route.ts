@@ -47,28 +47,25 @@ export async function POST(request: Request) {
 
   if (isDebug) {
     try {
-      const facturas = await siigoClient.consultarFacturasVenta(0); // 0 = Todo el historial
-      const paidInvoices = facturas.filter((f) => Number(f.balance || 0) === 0);
-      const partialInvoices = facturas.filter((f) => Number(f.balance || 0) > 0 && Number(f.balance || 0) < Number(f.total || 0));
-      const unpaidInvoices = facturas.filter((f) => Number(f.balance || 0) === Number(f.total || 0));
+      const token = await siigoClient.obtenerToken();
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'Partner-Id': partnerId,
+        'Content-Type': 'application/json',
+      };
 
-      const paymentsWithPaidKey = facturas.filter((f) =>
-        f.payments?.some((p) => (p as Record<string, unknown>).paid !== undefined)
-      );
+      // Probar endpoints de SIIGO
+      const [resVouchers, resCreditNotes, resInvoices] = await Promise.all([
+        fetch('https://api.siigo.com/v1/vouchers?page_size=10', { headers }).then((r) => r.json()).catch((e) => ({ error: e.message })),
+        fetch('https://api.siigo.com/v1/credit-notes?page_size=10', { headers }).then((r) => r.json()).catch((e) => ({ error: e.message })),
+        fetch('https://api.siigo.com/v1/invoices?page_size=10', { headers }).then((r) => r.json()).catch((e) => ({ error: e.message })),
+      ]);
 
       return NextResponse.json({
         success: true,
-        total_invoices_fetched: facturas.length,
-        summary: {
-          paid_count: paidInvoices.length,
-          partial_count: partialInvoices.length,
-          unpaid_count: unpaidInvoices.length,
-          payments_with_paid_flag_count: paymentsWithPaidKey.length,
-        },
-        sample_invoice: facturas[0] || null,
-        sample_paid_invoice: paidInvoices[0] || null,
-        sample_partial_invoice: partialInvoices[0] || null,
-        sample_payment_object: facturas[0]?.payments?.[0] || null,
+        vouchers_response: resVouchers,
+        credit_notes_response: resCreditNotes,
+        invoices_sample: resInvoices.results ? resInvoices.results[0] : null,
       });
     } catch (err) {
       return NextResponse.json({ success: false, error: (err as Error).message }, { status: 500 });
