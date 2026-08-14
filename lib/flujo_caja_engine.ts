@@ -159,6 +159,8 @@ export function evaluarRecurrencia(
 
 /**
  * Calcula la proyección de flujo de caja semana a semana para las próximas N semanas.
+ * Optimizado mediante Bulk Query Batching en paralelo (Promise.all)
+ * e indexación en memoria con Map/Set para cálculos sub-milisegundo.
  */
 export async function calcularProyeccionFlujoCaja(
   supabaseClient: unknown,
@@ -184,64 +186,170 @@ export async function calcularProyeccionFlujoCaja(
     return [];
   }
 
-  // 1. Obtener facturas pendientes o parciales
-  const { data: facturasData, error: errFacturas } = await supabase
-    .from('facturas')
-    .select('id, valor, fecha_estimada_recaudo, estado')
-    .in('estado', ['pendiente', 'parcial']);
+  const semanaList = semanasData as Semana[];
+  const semanaIds = semanaList.map((s) => s.id);
+  const minFecha = semanaList[0].fecha_inicio;
+  const maxFecha = semanaList[semanaList.length - 1].fecha_fin;
 
-  if (errFacturas) {
-    console.error('Error al consultar facturas:', errFacturas);
-    throw errFacturas;
+  // Consultas masivas en paralelo (Bulk Fetching)
+  const [
+    facturasRes,
+    recaudosRes,
+    egresosRes,
+    compromisosRes,
+    saldosRes,
+    recurrentesRes,
+  ] = await Promise.all([
+    supabase
+      .from('facturas')
+      .select('id, valor, fecha_estimada_recaudo, estado, recaudos(valor)')
+      .in('estado', ['pendiente', 'parcial']),
+    supabase
+      .from('recaudos')
+      .select('id, valor, semana_id, factura_id')
+      .in('semana_id', semanaIds),
+    supabase
+      .from('egresos')
+      .select('id, valor, semana_id, categoria_id')
+      .in('semana_id', semanaIds),
+    supabase
+      .from('compromisos')
+      .select('id, valor, fecha, estado')
+      .eq('estado', 'pendiente')
+      .gte('fecha', minFecha)
+      .lte('fecha', maxFecha),
+    supabase
+      .from('saldos_semanales')
+      .select('id, saldo, semana_id')
+      .in('semana_id', semanaIds),
+    supabase
+      .from('egresos_recurrentes')
+      .select('*')
+      .eq('activa', true),
+  ]);
+
+  if (facturasRes.error) {
+    console.error('Error al consultar facturas:', facturasRes.error);
+    throw facturasRes.error;
+  }
+  if (recaudosRes.error) {
+    console.error('Error al consultar recaudos:', recaudosRes.error);
+    throw recaudosRes.error;
+  }
+  if (egresosRes.error) {
+    console.error('Error al consultar egresos:', egresosRes.error);
+    throw egresosRes.error;
+  }
+  if (compromisosRes.error) {
+    console.error('Error al consultar compromisos:', compromisosRes.error);
+    throw compromisosRes.error;
+  }
+  if (saldosRes.error) {
+    console.error('Error al consultar saldos_semanales:', saldosRes.error);
+    throw saldosRes.error;
+  }
+  if (recurrentesRes.error) {
+    console.error('Error al consultar egresos recurrentes:', recurrentesRes.error);
+    throw recurrentesRes.error;
   }
 
+  // 1. Indexación en memoria: Saldos iniciales por semana_id
+  const saldosPorSemanaMap = new Map<number, number>();
+  for (const s of (saldosRes.data || []) as Array<{ saldo?: number | string; semana_id?: number }>) {
+    const semId = Number(s.semana_id);
+    saldosPorSemanaMap.set(
+      semId,
+      (saldosPorSemanaMap.get(semId) || 0) + Number(s.saldo || 0)
+    );
+  }
+
+  // 2. Indexación en memoria: Recaudos reales por semana_id y recaudos por factura_id
+  const recaudosPorSemanaMap = new Map<number, number>();
+  const recaudosPorFacturaMap = new Map<number, number>();
+  for (const r of (recaudosRes.data || []) as Array<{ valor?: number | string; semana_id?: number; factura_id?: number }>) {
+    if (r.semana_id !== undefined && r.semana_id !== null) {
+      const semId = Number(r.semana_id);
+      recaudosPorSemanaMap.set(
+        semId,
+        (recaudosPorSemanaMap.get(semId) || 0) + Number(r.valor || 0)
+      );
+    }
+    if (r.factura_id !== undefined && r.factura_id !== null) {
+      const fId = Number(r.factura_id);
+      recaudosPorFacturaMap.set(
+        fId,
+        (recaudosPorFacturaMap.get(fId) || 0) + Number(r.valor || 0)
+      );
+    }
+  }
+
+  // 3. Indexación en memoria: Facturas pendientes
   const facturasMap = new Map<
     number,
     { fechaEst: string; pendiente: number }
   >();
+  for (const f of (facturasRes.data || []) as Array<{
+    id: number;
+    valor: number | string;
+    fecha_estimada_recaudo: string;
+    estado: string;
+    recaudos?: Array<{ valor?: number | string }>;
+  }>) {
+    const recaudosList = f.recaudos;
+    const totalRecaudado = Array.isArray(recaudosList)
+      ? recaudosList.reduce(
+          (acc: number, r: { valor?: number | string }) => acc + Number(r.valor || 0),
+          0
+        )
+      : (recaudosPorFacturaMap.get(f.id) || 0);
 
-  if (facturasData) {
-    for (const f of facturasData) {
-      const { data: recaudosData } = await supabase
-        .from('recaudos')
-        .select('valor')
-        .eq('factura_id', f.id);
-
-      const totalRecaudado = recaudosData
-        ? recaudosData.reduce(
-            (acc: number, r: Record<string, unknown>) => acc + Number(r.valor),
-            0
-          )
-        : 0;
-
-      const pendiente = Number(f.valor) - totalRecaudado;
-      if (pendiente > 0) {
-        facturasMap.set(f.id, {
-          fechaEst: f.fecha_estimada_recaudo,
-          pendiente,
-        });
-      }
+    const pendiente = Number(f.valor || 0) - totalRecaudado;
+    if (pendiente > 0) {
+      facturasMap.set(f.id, {
+        fechaEst: f.fecha_estimada_recaudo,
+        pendiente,
+      });
     }
   }
 
-  // 2. Obtener egresos recurrentes activos
-  const { data: recurrentesData, error: errRecurrentes } = await supabase
-    .from('egresos_recurrentes')
-    .select('*')
-    .eq('activa', true);
+  // 4. Indexación en memoria: Egresos reales por semana_id y categorías
+  const egresosPorSemanaMap = new Map<number, number>();
+  const egresosCategoriasPorSemanaMap = new Map<number, Set<number>>();
+  for (const e of (egresosRes.data || []) as Array<{
+    valor?: number | string;
+    semana_id?: number;
+    categoria_id?: number;
+  }>) {
+    const semId = Number(e.semana_id);
+    const catId = Number(e.categoria_id);
+    const val = Number(e.valor || 0);
 
-  if (errRecurrentes) {
-    console.error('Error al consultar egresos recurrentes:', errRecurrentes);
-    throw errRecurrentes;
+    egresosPorSemanaMap.set(
+      semId,
+      (egresosPorSemanaMap.get(semId) || 0) + val
+    );
+
+    if (!egresosCategoriasPorSemanaMap.has(semId)) {
+      egresosCategoriasPorSemanaMap.set(semId, new Set<number>());
+    }
+    egresosCategoriasPorSemanaMap.get(semId)!.add(catId);
   }
 
-  const recurrentes: EgresoRecurrente[] = recurrentesData || [];
-  const resultado: ProyeccionSemanal[] = [];
+  // 5. Compromisos en memoria
+  const compromisosList = (compromisosRes.data || []) as Array<{
+    valor?: number | string;
+    fecha?: string;
+  }>;
 
+  // 6. Egresos recurrentes activos
+  const recurrentes: EgresoRecurrente[] = (recurrentesRes.data || []) as EgresoRecurrente[];
+
+  // ── Cálculo Secuencial de Proyecciones en Memoria ──
+  const resultado: ProyeccionSemanal[] = [];
   let saldoAcumulado: number | null = null;
   let primeraSemana = true;
 
-  for (const sem of semanasData as Semana[]) {
+  for (const sem of semanaList) {
     const semanaId = sem.id;
     const fechaInicioStr = sem.fecha_inicio;
     const fechaFinStr = sem.fecha_fin;
@@ -249,28 +357,14 @@ export async function calcularProyeccionFlujoCaja(
     // Saldo inicial de la semana
     let saldoInicial = 0;
     if (saldoAcumulado === null) {
-      const { data: saldosData } = await supabase
-        .from('saldos_semanales')
-        .select('saldo')
-        .eq('semana_id', semanaId);
-
-      saldoInicial = saldosData
-        ? saldosData.reduce((acc: number, s: Record<string, unknown>) => acc + Number(s.saldo), 0)
-        : 0;
+      saldoInicial = saldosPorSemanaMap.get(semanaId) || 0;
     } else {
       saldoInicial = saldoAcumulado;
     }
 
     // ── RECAUDOS DE LA SEMANA ──
     // A. Recaudos reales
-    const { data: recaudosData } = await supabase
-      .from('recaudos')
-      .select('valor')
-      .eq('semana_id', semanaId);
-
-    const recaudosReales = recaudosData
-      ? recaudosData.reduce((acc: number, r: Record<string, unknown>) => acc + Number(r.valor), 0)
-      : 0;
+    const recaudosReales = recaudosPorSemanaMap.get(semanaId) || 0;
 
     // B. Recaudos proyectados de facturas pendientes
     let recaudosProyectados = 0;
@@ -293,50 +387,28 @@ export async function calcularProyeccionFlujoCaja(
 
     // ── EGRESOS DE LA SEMANA ──
     // A. Egresos reales
-    const { data: egresosData } = await supabase
-      .from('egresos')
-      .select('valor, categoria_id')
-      .eq('semana_id', semanaId);
+    const totalEgresosReales = egresosPorSemanaMap.get(semanaId) || 0;
+    const categoriasConEgresoReal =
+      egresosCategoriasPorSemanaMap.get(semanaId) || new Set<number>();
 
-    const egresosRealesMap = new Map<number, number>();
-    let totalEgresosReales = 0;
-
-    if (egresosData) {
-      for (const e of egresosData) {
-        const catId = Number(e.categoria_id);
-        const val = Number(e.valor);
-        egresosRealesMap.set(
-          catId,
-          (egresosRealesMap.get(catId) || 0) + val
-        );
-        totalEgresosReales += val;
-      }
-    }
-
-    // B. Egresos proyectados recurrentes
+    // B. Egresos proyectados recurrentes (se omiten si ya existe un egreso real de esa categoría)
     let totalEgresosRecurrentes = 0;
     for (const rec of recurrentes) {
-      if (!egresosRealesMap.has(rec.categoria_id)) {
+      if (!categoriasConEgresoReal.has(rec.categoria_id)) {
         if (evaluarRecurrencia(rec, fechaInicioStr, fechaFinStr)) {
           totalEgresosRecurrentes += Number(rec.monto_estimado);
         }
       }
     }
 
-    // C. Compromisos pendientes
-    const { data: compromisosData } = await supabase
-      .from('compromisos')
-      .select('valor')
-      .eq('estado', 'pendiente')
-      .gte('fecha', fechaInicioStr)
-      .lte('fecha', fechaFinStr);
-
-    const totalCompromisos = compromisosData
-      ? compromisosData.reduce(
-          (acc: number, c: Record<string, unknown>) => acc + Number(c.valor),
-          0
-        )
-      : 0;
+    // C. Compromisos pendientes en el rango de fechas de la semana
+    let totalCompromisos = 0;
+    for (const c of compromisosList) {
+      const cFecha = c.fecha || '';
+      if (cFecha >= fechaInicioStr && cFecha <= fechaFinStr) {
+        totalCompromisos += Number(c.valor || 0);
+      }
+    }
 
     const totalEgresos =
       totalEgresosReales + totalEgresosRecurrentes + totalCompromisos;
@@ -399,6 +471,7 @@ export async function guardarSnapshotProyeccion(
 
 /**
  * Compara las estimaciones congeladas históricas contra los resultados reales.
+ * Optimizado con bulk queries en paralelo para evitar N+1 queries.
  */
 export async function obtenerCalibracionProyeccion(
   supabaseClient: unknown,
@@ -420,41 +493,55 @@ export async function obtenerCalibracionProyeccion(
     return [];
   }
 
+  const snapSemanaIds = snapshotsData.map((s) => s.semana_id);
+
+  // Bulk queries en paralelo
+  const [recaudosRes, egresosRes, saldosRes] = await Promise.all([
+    supabase
+      .from('recaudos')
+      .select('valor, semana_id')
+      .in('semana_id', snapSemanaIds),
+    supabase
+      .from('egresos')
+      .select('valor, semana_id')
+      .in('semana_id', snapSemanaIds),
+    supabase
+      .from('saldos_semanales')
+      .select('saldo, semana_id')
+      .in('semana_id', snapSemanaIds),
+  ]);
+
+  if (recaudosRes.error) throw recaudosRes.error;
+  if (egresosRes.error) throw egresosRes.error;
+  if (saldosRes.error) throw saldosRes.error;
+
+  const recaudosMap = new Map<number, number>();
+  for (const r of (recaudosRes.data || []) as Array<{ valor?: number | string; semana_id?: number }>) {
+    const semId = Number(r.semana_id);
+    recaudosMap.set(semId, (recaudosMap.get(semId) || 0) + Number(r.valor || 0));
+  }
+
+  const egresosMap = new Map<number, number>();
+  for (const e of (egresosRes.data || []) as Array<{ valor?: number | string; semana_id?: number }>) {
+    const semId = Number(e.semana_id);
+    egresosMap.set(semId, (egresosMap.get(semId) || 0) + Number(e.valor || 0));
+  }
+
+  const saldosMap = new Map<number, number>();
+  for (const s of (saldosRes.data || []) as Array<{ saldo?: number | string; semana_id?: number }>) {
+    const semId = Number(s.semana_id);
+    saldosMap.set(semId, (saldosMap.get(semId) || 0) + Number(s.saldo || 0));
+  }
+
   const resultado: CalibracionProyeccion[] = [];
 
   for (const snap of snapshotsData) {
     const semana = snap.semanas;
     const semanaId = snap.semana_id;
 
-    // Recaudos reales
-    const { data: recaudosData } = await supabase
-      .from('recaudos')
-      .select('valor')
-      .eq('semana_id', semanaId);
-
-    const realRecaudo = recaudosData
-      ? recaudosData.reduce((acc: number, r: Record<string, unknown>) => acc + Number(r.valor), 0)
-      : 0;
-
-    // Egresos reales
-    const { data: egresosData } = await supabase
-      .from('egresos')
-      .select('valor')
-      .eq('semana_id', semanaId);
-
-    const realEgresos = egresosData
-      ? egresosData.reduce((acc: number, e: Record<string, unknown>) => acc + Number(e.valor), 0)
-      : 0;
-
-    // Saldo inicial real de esa semana
-    const { data: saldosData } = await supabase
-      .from('saldos_semanales')
-      .select('saldo')
-      .eq('semana_id', semanaId);
-
-    const saldoInicialReal = saldosData
-      ? saldosData.reduce((acc: number, s: Record<string, unknown>) => acc + Number(s.saldo), 0)
-      : 0;
+    const realRecaudo = recaudosMap.get(semanaId) || 0;
+    const realEgresos = egresosMap.get(semanaId) || 0;
+    const saldoInicialReal = saldosMap.get(semanaId) || 0;
 
     const realSaldoFinal = saldoInicialReal + realRecaudo - realEgresos;
 

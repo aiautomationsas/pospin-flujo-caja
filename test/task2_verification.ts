@@ -303,7 +303,7 @@ async function runTests() {
   console.log('✓ calcularProyeccionFlujoCaja passed.');
 
   // -------------------------------------------------------------
-  // Test 6: Route Handler validation
+  // Test 6: app/api/siigo/sync Route Handler validation
   // -------------------------------------------------------------
   console.log('\nTest 6: app/api/siigo/sync Route Handler...');
 
@@ -316,6 +316,150 @@ async function runTests() {
   assert(res400.status === 400, 'Route handler should return 400 for missing credentials');
 
   console.log('✓ app/api/siigo/sync Route Handler passed.');
+
+  // -------------------------------------------------------------
+  // Test 7: Multi-week Bulk Proyections & Calibracion Tests
+  // -------------------------------------------------------------
+  console.log('\nTest 7: Multi-week Bulk Projections & In-Memory Calculations...');
+
+  const w1Start = '2026-08-10';
+  const w1End = '2026-08-16';
+  const w2Start = '2026-08-17';
+  const w2End = '2026-08-23';
+
+  const mockDbSemanasMulti = [
+    { id: 101, numero: 33, anio: 2026, fecha_inicio: w1Start, fecha_fin: w1End },
+    { id: 102, numero: 34, anio: 2026, fecha_inicio: w2Start, fecha_fin: w2End },
+  ];
+
+  const mockDbFacturasMulti = [
+    // Overdue invoice (should roll into Week 1)
+    { id: 1, valor: 300, fecha_estimada_recaudo: '2026-08-01', estado: 'pendiente' },
+    // Week 2 invoice with partial recaudo already made
+    { id: 2, valor: 1000, fecha_estimada_recaudo: '2026-08-18', estado: 'parcial', recaudos: [{ valor: 400 }] },
+  ];
+
+  const mockDbRecaudosMulti = [
+    // Real recaudo in Week 1
+    { id: 1, semana_id: 101, valor: 500, factura_id: null },
+  ];
+
+  const mockDbEgresosMulti = [
+    // Real egreso in Week 1 for categoria 1 (overrides recurring)
+    { id: 1, semana_id: 101, categoria_id: 1, valor: 250 },
+  ];
+
+  const mockDbCompromisosMulti = [
+    // Commitment in Week 2
+    { id: 1, fecha: '2026-08-20', valor: 150, estado: 'pendiente' },
+  ];
+
+  const mockDbSaldosMulti = [
+    { id: 1, semana_id: 101, saldo: 1000 },
+    { id: 2, semana_id: 102, saldo: 9999 }, // Should be ignored in week 2 because initial saldo comes from week 1 final
+  ];
+
+  const mockDbRecurrentesMulti = [
+    // Weekly category 1 (200) -> in week 1 it is overridden by real egreso (250). In week 2 it applies (200).
+    { id: 1, categoria_id: 1, tercero: 'Servicio 1', frecuencia: 'semanal', dia_pago: 1, monto_estimado: 200, activa: true },
+  ];
+
+  const mockDbSnapshots = [
+    {
+      id: 1,
+      semana_id: 101,
+      recaudo_estimado: 700,
+      egresos_estimado: 200,
+      saldo_final_estimado: 1500,
+      congelado_at: '2026-08-10',
+      semanas: { numero: 33, anio: 2026, fecha_inicio: w1Start },
+    },
+  ];
+
+  const mockSupabaseMulti = {
+    from: (tableName: string) => {
+      let chain: any = {
+        select: (cols: string) => chain,
+        gte: (col: string, val: any) => chain,
+        lte: (col: string, val: any) => chain,
+        eq: (col: string, val: any) => chain,
+        in: (col: string, vals: any[]) => chain,
+        order: (col: string, opts: any) => chain,
+        limit: (lim: number) => {
+          if (tableName === 'semanas') {
+            return Promise.resolve({ data: mockDbSemanasMulti, error: null });
+          }
+          if (tableName === 'snapshots_proyeccion') {
+            return Promise.resolve({ data: mockDbSnapshots, error: null });
+          }
+          return Promise.resolve({ data: [], error: null });
+        },
+      };
+
+      chain.then = (resolve: any) => {
+        if (tableName === 'facturas') {
+          resolve({ data: mockDbFacturasMulti, error: null });
+        } else if (tableName === 'recaudos') {
+          resolve({ data: mockDbRecaudosMulti, error: null });
+        } else if (tableName === 'egresos_recurrentes') {
+          resolve({ data: mockDbRecurrentesMulti, error: null });
+        } else if (tableName === 'saldos_semanales') {
+          resolve({ data: mockDbSaldosMulti, error: null });
+        } else if (tableName === 'egresos') {
+          resolve({ data: mockDbEgresosMulti, error: null });
+        } else if (tableName === 'compromisos') {
+          resolve({ data: mockDbCompromisosMulti, error: null });
+        } else {
+          resolve({ data: [], error: null });
+        }
+      };
+
+      return chain;
+    },
+  };
+
+  const projs = await calcularProyeccionFlujoCaja(mockSupabaseMulti, 2);
+  assert(projs.length === 2, 'Should return 2 weeks projection');
+
+  // Week 1:
+  // Saldo Inicial = 1000
+  // Recaudo Real = 500
+  // Recaudo Proyectado = 300 (overdue invoice)
+  // Total Recaudo = 800
+  // Egreso Real = 250
+  // Egreso Recurrente = 0 (overridden by real egreso in cat 1)
+  // Compromisos = 0
+  // Total Egresos = 250
+  // Saldo Final = 1000 + 800 - 250 = 1550
+  assert(projs[0].saldo_inicial === 1000, 'Week 1 saldo inicial should be 1000');
+  assert(projs[0].recaudo === 800, 'Week 1 total recaudo should be 800');
+  assert(projs[0].egresos === 250, 'Week 1 total egresos should be 250');
+  assert(projs[0].saldo_final === 1550, 'Week 1 saldo final should be 1550');
+
+  // Week 2:
+  // Saldo Inicial = 1550 (accumulated from Week 1)
+  // Recaudo Real = 0
+  // Recaudo Proyectado = 1000 - 400 = 600
+  // Total Recaudo = 600
+  // Egreso Real = 0
+  // Egreso Recurrente = 200 (cat 1 applies)
+  // Compromisos = 150
+  // Total Egresos = 350
+  // Saldo Final = 1550 + 600 - 350 = 1800
+  assert(projs[1].saldo_inicial === 1550, 'Week 2 saldo inicial should be 1550');
+  assert(projs[1].recaudo === 600, 'Week 2 total recaudo should be 600');
+  assert(projs[1].egresos === 350, 'Week 2 total egresos should be 350');
+  assert(projs[1].saldo_final === 1800, 'Week 2 saldo final should be 1800');
+
+  // Calibracion
+  const calibraciones = await obtenerCalibracionProyeccion(mockSupabaseMulti, 4);
+  assert(calibraciones.length === 1, 'Should return 1 calibration row');
+  assert(calibraciones[0].recaudo_real === 500, 'Calibration real recaudo should be 500');
+  assert(calibraciones[0].egresos_real === 250, 'Calibration real egresos should be 250');
+  assert(calibraciones[0].saldo_real === 1000 + 500 - 250, 'Calibration real saldo should be 1250');
+  assert(calibraciones[0].saldo_desvio === 1250 - 1500, 'Calibration saldo desvio should be -250');
+
+  console.log('✓ Multi-week bulk projections and calibrations passed.');
 
   // Restore fetch
   globalThis.fetch = originalFetch;
