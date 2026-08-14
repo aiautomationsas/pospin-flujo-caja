@@ -95,14 +95,29 @@ export default function FacturasPage() {
         }
       } else {
         const facturasProcesadas: FacturaConCliente[] = facturasData.map((f: Record<string, unknown>) => {
+          const valor = Number(f.valor || 0);
+          const dbEstado = (f.estado as string) || 'pendiente';
           const recaudos = (f.recaudos as Record<string, unknown>[]) || [];
-          const totalRecaudado = recaudos.reduce(
+          const manualRecaudado = recaudos.reduce(
             (sum: number, r: Record<string, unknown>) => sum + Number(r.valor),
             0
           );
-          const saldoPendiente = Math.max(0, Number(f.valor) - totalRecaudado);
+
+          let totalRecaudado = manualRecaudado;
+          let saldoPendiente = Math.max(0, valor - totalRecaudado);
+
+          if (dbEstado === 'pagada') {
+            saldoPendiente = 0;
+            totalRecaudado = valor;
+          } else if (dbEstado === 'parcial') {
+            const rawSaldo = f.saldo_pendiente !== undefined ? Number(f.saldo_pendiente) : valor / 2;
+            saldoPendiente = Math.max(0, Math.min(rawSaldo, valor - manualRecaudado));
+            totalRecaudado = valor - saldoPendiente;
+          }
+
           return {
             ...(f as unknown as FacturaConCliente),
+            estado: dbEstado as EstadoFactura,
             total_recaudado: totalRecaudado,
             saldo_pendiente: saldoPendiente,
           };
