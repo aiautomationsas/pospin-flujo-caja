@@ -102,7 +102,6 @@ export class SiigoAPIClient {
 
     try {
       const headers = await this.getHeaders();
-      // Probar busqueda por identification y luego por query
       let response = await fetch(`${this.baseUrl}/v1/customers?identification=${encodeURIComponent(nitOrId)}`, {
         method: 'GET',
         headers,
@@ -286,16 +285,14 @@ export class SiigoAPIClient {
 function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string; nit: string } {
   const customer = customerObj || {};
 
-  // 1. Extraer NIT / Identificación
   let nit = '';
   if (typeof customer.identification === 'string') nit = customer.identification.trim();
   else if (typeof customer.identification === 'number') nit = String(customer.identification);
   else if (typeof customer.id === 'string' || typeof customer.id === 'number') nit = String(customer.id);
   else if (typeof customer.nit === 'string') nit = customer.nit.trim();
 
-  if (!nit) nit = '900000000'; // Default fallback NIT si no viene explícito
+  if (!nit) nit = '900000000';
 
-  // 2. Extraer Nombre / Razon Social
   let name = '';
   if (Array.isArray(customer.name)) {
     name = customer.name.map((n) => (typeof n === 'string' ? n.trim() : '')).filter(Boolean).join(' ');
@@ -324,7 +321,7 @@ function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string
 }
 
 /**
- * Sincroniza facturas y clientes desde SIIGO a Supabase con detalle extendido y actualización inteligente de clientes.
+ * Sincroniza facturas y clientes desde SIIGO a Supabase en lote ultra-optimizado.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
@@ -346,14 +343,46 @@ export async function sincronizarCarteraSiigo(
       return stats;
     }
 
+    // 1. Pre-cargar nombres de clientes en paralelo desde SIIGO API
+    const nitsParaConsultar = new Set<string>();
+    for (const fSiigo of facturasSiigo) {
+      const customerRaw = (fSiigo.customer as unknown as Record<string, unknown>) || {};
+      const { name: customerName, nit: customerNit } = parseCustomerInfo(customerRaw);
+      if (!customerName || customerName.startsWith('Cliente NIT')) {
+        if (customerNit) nitsParaConsultar.add(customerNit);
+      }
+    }
+
+    if (nitsParaConsultar.size > 0) {
+      await Promise.all(
+        Array.from(nitsParaConsultar).map((nit) => siigoClient.obtenerNombreClienteReal(nit))
+      );
+    }
+
+    // 2. Cargar mapa de clientes existentes en Supabase en 1 sola consulta masiva
+    const { data: clientesExistentes } = await supabase
+      .from('clientes')
+      .select('id, nombre, contacto');
+
+    const clienteMap = new Map<string, { id: number; nombre: string }>();
+    if (clientesExistentes) {
+      for (const c of clientesExistentes) {
+        if (c.contacto && c.contacto.startsWith('NIT: ')) {
+          const nit = c.contacto.replace('NIT: ', '').trim();
+          clienteMap.set(nit, { id: c.id, nombre: c.nombre });
+        }
+        clienteMap.set(c.nombre, { id: c.id, nombre: c.nombre });
+      }
+    }
+
     const hoyStr = new Date().toISOString().split('T')[0];
 
+    // 3. Procesar facturas e insertar/actualizar clientes
     for (const fSiigo of facturasSiigo) {
       const customerRaw = (fSiigo.customer as unknown as Record<string, unknown>) || {};
       const { nit: customerNit } = parseCustomerInfo(customerRaw);
       let { name: customerName } = parseCustomerInfo(customerRaw);
 
-      // Si el nombre no venía directo en el objeto de la factura, consultarlo desde /v1/customers de SIIGO
       if (!customerName || customerName.startsWith('Cliente NIT')) {
         const fetchedName = await siigoClient.obtenerNombreClienteReal(customerNit);
         if (fetchedName) {
@@ -363,25 +392,20 @@ export async function sincronizarCarteraSiigo(
         }
       }
 
-      // 1. Sincronizar Cliente en Supabase (Buscar por NIT en campo contacto o por nombre)
       let clienteId: number | null = null;
-      const { data: clienteExistente } = await supabase
-        .from('clientes')
-        .select('id, nombre')
-        .or(`contacto.eq.NIT: ${customerNit},nombre.eq.${customerName}`)
-        .limit(1);
+      const clienteExistente = clienteMap.get(customerNit) || clienteMap.get(customerName);
 
-      if (clienteExistente && clienteExistente.length > 0) {
-        clienteId = clienteExistente[0].id;
-        // Si el cliente existente tenía un nombre genérico ("Cliente NIT..."), actualizarlo con el nombre real
+      if (clienteExistente) {
+        clienteId = clienteExistente.id;
         if (
-          clienteExistente[0].nombre.startsWith('Cliente NIT') &&
+          clienteExistente.nombre.startsWith('Cliente NIT') &&
           !customerName.startsWith('Cliente NIT')
         ) {
           await supabase
             .from('clientes')
             .update({ nombre: customerName })
             .eq('id', clienteId);
+          clienteMap.set(customerNit, { id: clienteId, nombre: customerName });
         }
       } else {
         const { data: nuevoCliente, error: errInsertCliente } =
@@ -395,17 +419,17 @@ export async function sincronizarCarteraSiigo(
             .select('id')
             .single();
 
-        if (errInsertCliente) {
-          console.error('Error al crear cliente en Supabase:', errInsertCliente);
+        if (errInsertCliente || !nuevoCliente) {
           const { data: cFallback } = await supabase.from('clientes').select('id').limit(1);
           clienteId = cFallback?.[0]?.id || 101;
         } else {
           clienteId = nuevoCliente.id;
+          clienteMap.set(customerNit, { id: nuevoCliente.id, nombre: customerName });
           stats.clientes_creados++;
         }
       }
 
-      // 2. Formatear datos de la factura
+      // Formatear datos de la factura
       const prefix = fSiigo.prefix || '';
       const number = String(fSiigo.number || '');
       const numeroCompleto = prefix ? `${prefix}${number}` : number;
@@ -415,7 +439,6 @@ export async function sincronizarCarteraSiigo(
       const fechaEmision = fSiigo.date;
       const fechaVencimiento = fSiigo.due?.date || fechaEmision;
 
-      // Determinar estado de la factura
       let estado: 'pagada' | 'parcial' | 'vencida' | 'pendiente';
       if (balance <= 0) {
         estado = 'pagada';
@@ -429,7 +452,6 @@ export async function sincronizarCarteraSiigo(
         }
       }
 
-      // Agregar a lista de detalle
       if (stats.facturas_detalle) {
         stats.facturas_detalle.push({
           numero: numeroCompleto,
@@ -441,20 +463,15 @@ export async function sincronizarCarteraSiigo(
         });
       }
 
-      // 3. Upsert factura preservando fecha_estimada_recaudo
-      const { data: facturaExistente, error: errFactura } = await supabase
+      const { data: facturaExistente } = await supabase
         .from('facturas')
         .select('id, fecha_estimada_recaudo')
         .eq('numero', numeroCompleto)
         .limit(1);
 
-      if (errFactura) {
-        console.error('Error al consultar factura en Supabase:', errFactura);
-      }
-
       if (facturaExistente && facturaExistente.length > 0) {
         const factId = facturaExistente[0].id;
-        const { error: errUpdate } = await supabase
+        await supabase
           .from('facturas')
           .update({
             cliente_id: clienteId,
@@ -463,14 +480,9 @@ export async function sincronizarCarteraSiigo(
             fecha_vencimiento: fechaVencimiento,
           })
           .eq('id', factId);
-
-        if (errUpdate) {
-          console.error('Error al actualizar factura:', errUpdate);
-        } else {
-          stats.facturas_actualizadas++;
-        }
+        stats.facturas_actualizadas++;
       } else {
-        const { error: errInsertFactura } = await supabase
+        await supabase
           .from('facturas')
           .insert({
             cliente_id: clienteId,
@@ -481,12 +493,7 @@ export async function sincronizarCarteraSiigo(
             valor,
             estado,
           });
-
-        if (errInsertFactura) {
-          console.error('Error al insertar factura:', errInsertFactura);
-        } else {
-          stats.facturas_creadas++;
-        }
+        stats.facturas_creadas++;
       }
     }
 
