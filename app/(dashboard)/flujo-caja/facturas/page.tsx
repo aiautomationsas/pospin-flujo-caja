@@ -1,9 +1,18 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import type { FacturaConCliente, EstadoFactura, Cliente } from '@/types/flujo_caja';
+import type { FacturaConCliente, Cliente, EstadoFactura } from '@/types/flujo_caja';
 import { formatCOP, formatFechaEsp } from '@/lib/format';
 import { supabase } from '@/lib/supabaseClient';
+import FlujoCajaSubNav from '@/components/flujo-caja/FlujoCajaSubNav';
+import { Button } from '@/components/ui/button';
+import {
+  Receipt,
+  Plus,
+  Search,
+  DollarSign,
+  X,
+} from 'lucide-react';
 
 export default function FacturasPage() {
   const [facturas, setFacturas] = useState<FacturaConCliente[]>([]);
@@ -19,7 +28,7 @@ export default function FacturasPage() {
   const [showRecaudoModal, setShowRecaudoModal] = useState(false);
   const [selectedFactura, setSelectedFactura] = useState<FacturaConCliente | null>(null);
 
-  // Formulario Nueva Factura
+  // Form State: Nueva Factura
   const [newFactura, setNewFactura] = useState({
     cliente_nombre: '',
     numero: '',
@@ -29,7 +38,7 @@ export default function FacturasPage() {
     valor: '',
   });
 
-  // Formulario Registrar Abono
+  // Form State: Registrar Recaudo
   const [recaudoInput, setRecaudoInput] = useState({
     valor: '',
     fecha: new Date().toISOString().split('T')[0],
@@ -38,7 +47,7 @@ export default function FacturasPage() {
 
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Cargar facturas y clientes desde Supabase (con fallback a mock si DB está vacía)
+  // Cargar facturas y clientes desde Supabase
   useEffect(() => {
     fetchFacturas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -66,7 +75,6 @@ export default function FacturasPage() {
       if (error || !facturasData || facturasData.length === 0) {
         setFacturas(getMockFacturas());
       } else {
-        // Calcular total recaudado y saldo pendiente para cada factura
         const facturasProcesadas: FacturaConCliente[] = facturasData.map((f: Record<string, unknown>) => {
           const recaudos = (f.recaudos as Record<string, unknown>[]) || [];
           const totalRecaudado = recaudos.reduce(
@@ -89,7 +97,6 @@ export default function FacturasPage() {
     }
   }
 
-  // Facturas de prueba si no hay conexión a DB
   function getMockFacturas(): FacturaConCliente[] {
     return [
       {
@@ -151,13 +158,10 @@ export default function FacturasPage() {
     ];
   }
 
-  // Filtrado de Facturas
   const facturasFiltradas = facturas.filter((f) => {
-    // Filtro por Tab Estado
     if (activeTab !== 'todas' && f.estado !== activeTab) {
       return false;
     }
-    // Filtro por término de búsqueda (número o nombre de cliente)
     if (searchTerm.trim() !== '') {
       const term = searchTerm.toLowerCase();
       const numMatch = f.numero.toLowerCase().includes(term);
@@ -167,13 +171,11 @@ export default function FacturasPage() {
     return true;
   });
 
-  // Métricas Consolidadas
   const totalFacturado = facturas.reduce((acc, f) => acc + f.valor, 0);
   const totalRecaudado = facturas.reduce((acc, f) => acc + (f.total_recaudado || 0), 0);
   const totalPendiente = facturas.reduce((acc, f) => acc + (f.saldo_pendiente || 0), 0);
   const facturasVencidas = facturas.filter((f) => f.estado === 'vencida');
 
-  // Submit Handler: Nueva Factura
   async function handleCreateFactura(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
@@ -185,7 +187,6 @@ export default function FacturasPage() {
     }
 
     try {
-      // 1. Obtener o crear cliente
       let clienteId = clientes.find(
         (c) => c.nombre.toLowerCase() === newFactura.cliente_nombre.toLowerCase()
       )?.id;
@@ -199,7 +200,6 @@ export default function FacturasPage() {
         if (newC) clienteId = newC.id;
       }
 
-      // 2. Insertar factura
       const payload = {
         cliente_id: clienteId || 101,
         numero: newFactura.numero,
@@ -218,7 +218,6 @@ export default function FacturasPage() {
 
       if (error) {
         console.warn('Fallback agregando a estado local:', error.message);
-        // Fallback local
         const mockNew: FacturaConCliente = {
           id: Date.now(),
           cliente_id: payload.cliente_id,
@@ -252,7 +251,6 @@ export default function FacturasPage() {
     }
   }
 
-  // Submit Handler: Registrar Recaudo / Abono
   async function handleRegistrarRecaudo(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedFactura) return;
@@ -271,7 +269,6 @@ export default function FacturasPage() {
       const nuevoSaldoPendiente = Math.max(0, selectedFactura.valor - nuevoTotalRecaudado);
       const nuevoEstado: EstadoFactura = nuevoSaldoPendiente <= 0 ? 'pagada' : 'parcial';
 
-      // Insertar recaudo en DB
       await supabase.from('recaudos').insert({
         factura_id: selectedFactura.id,
         semana_id: recaudoInput.semana_id || 1,
@@ -279,13 +276,11 @@ export default function FacturasPage() {
         fecha: recaudoInput.fecha,
       });
 
-      // Actualizar estado de factura
       await supabase
         .from('facturas')
         .update({ estado: nuevoEstado })
         .eq('id', selectedFactura.id);
 
-      // Actualizar state en React UI
       setFacturas(
         facturas.map((f) => {
           if (f.id === selectedFactura.id) {
@@ -313,464 +308,464 @@ export default function FacturasPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6 lg:p-8 font-sans">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
-            <span className="p-2 bg-indigo-600/20 text-indigo-400 rounded-xl border border-indigo-500/30">
-              🧾
-            </span>
-            Gestión de Facturas y Cartera
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Administre cuentas por cobrar, estados de cartera y registro de recaudos.
-          </p>
-        </div>
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
+      <FlujoCajaSubNav />
 
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2 self-start sm:self-auto"
-        >
-          <span>➕</span> Nueva Factura
-        </button>
-      </div>
-
-      {/* Tarjetas KPI de Resumen de Cartera */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Total Facturado
-          </span>
-          <div className="text-2xl font-bold font-mono text-white mt-1">
-            {formatCOP(totalFacturado)}
-          </div>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-            Total Recaudado
-          </span>
-          <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
-            {formatCOP(totalRecaudado)}
-          </div>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
-            Pendiente por Recaudar
-          </span>
-          <div className="text-2xl font-bold font-mono text-indigo-300 mt-1">
-            {formatCOP(totalPendiente)}
-          </div>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold uppercase tracking-wider text-rose-400">
-            Facturas Vencidas
-          </span>
-          <div className="text-2xl font-bold font-mono text-rose-400 mt-1">
-            {facturasVencidas.length}{' '}
-            <span className="text-xs font-normal text-rose-300/70">
-              ({formatCOP(facturasVencidas.reduce((a, b) => a + (b.saldo_pendiente || 0), 0))})
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Barra de Búsqueda y Tabs de Estado */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 mb-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        {/* Tabs de Filtro de Estado */}
-        <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
-          {(
-            [
-              { key: 'todas', label: 'Todas' },
-              { key: 'pendiente', label: 'Pendientes' },
-              { key: 'parcial', label: 'Parciales' },
-              { key: 'vencida', label: 'Vencidas' },
-              { key: 'pagada', label: 'Pagadas' },
-            ] as const
-          ).map((tab) => {
-            const count =
-              tab.key === 'todas'
-                ? facturas.length
-                : facturas.filter((f) => f.estado === tab.key).length;
-            const isActive = activeTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
-                  isActive
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                }`}
-              >
-                {tab.label}
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                    isActive ? 'bg-indigo-800 text-indigo-100' : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Input de Búsqueda */}
-        <div className="relative w-full md:w-72">
-          <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-            🔍
-          </span>
-          <input
-            type="text"
-            placeholder="Buscar por cliente o factura..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
-          />
-        </div>
-      </div>
-
-      {/* Tabla de Facturas */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
-        {loading ? (
-          <div className="py-12 text-center text-slate-500">
-            <div className="inline-block w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2" />
-            <p>Cargando facturas de cartera...</p>
-          </div>
-        ) : facturasFiltradas.length === 0 ? (
-          <div className="py-12 text-center text-slate-500">
-            <p className="text-lg font-medium text-slate-400">
-              No se encontraron facturas con los filtros seleccionados
+      <main className="container mx-auto px-4 sm:px-6 lg:px-8 pb-16 flex-1">
+        {/* Header de Gestión de Facturas */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="p-2 bg-primary/10 text-primary rounded-xl">
+                <Receipt className="w-6 h-6" />
+              </span>
+              <h1 className="text-3xl font-extrabold text-primary tracking-tight">
+                Gestión de Facturas y Cartera
+              </h1>
+            </div>
+            <p className="text-muted-foreground text-sm">
+              Administre cuentas por cobrar, estados de cartera y registro de recaudos.
             </p>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider bg-slate-950/80">
-                  <th className="py-3.5 px-4">Número</th>
-                  <th className="py-3.5 px-4">Cliente</th>
-                  <th className="py-3.5 px-4">Emisión</th>
-                  <th className="py-3.5 px-4">Vencimiento</th>
-                  <th className="py-3.5 px-4">Est. Recaudo</th>
-                  <th className="py-3.5 px-4 text-right">Valor Total</th>
-                  <th className="py-3.5 px-4 text-right">Saldo Pendiente</th>
-                  <th className="py-3.5 px-4 text-center">Estado</th>
-                  <th className="py-3.5 px-4 text-center">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 text-sm">
-                {facturasFiltradas.map((f) => (
-                  <tr
-                    key={f.id}
-                    className="hover:bg-slate-800/40 text-slate-300 transition-colors"
-                  >
-                    <td className="py-3.5 px-4 font-bold font-mono text-indigo-300">
-                      {f.numero}
-                    </td>
-                    <td className="py-3.5 px-4 font-medium text-white">
-                      {f.cliente?.nombre || 'Cliente sin nombre'}
-                    </td>
-                    <td className="py-3.5 px-4 text-xs text-slate-400">
-                      {formatFechaEsp(f.fecha_emision)}
-                    </td>
-                    <td className="py-3.5 px-4 text-xs text-slate-400">
-                      {formatFechaEsp(f.fecha_vencimiento)}
-                    </td>
-                    <td className="py-3.5 px-4 text-xs text-indigo-300 font-medium">
-                      {formatFechaEsp(f.fecha_estimada_recaudo)}
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-mono text-slate-300">
-                      {formatCOP(f.valor)}
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-400">
-                      {formatCOP(f.saldo_pendiente || 0)}
-                    </td>
-                    <td className="py-3.5 px-4 text-center">
-                      <span
-                        className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
-                          f.estado === 'pagada'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : f.estado === 'parcial'
-                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            : f.estado === 'vencida'
-                            ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                            : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                        }`}
-                      >
-                        {f.estado.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-center">
-                      {f.estado !== 'pagada' ? (
-                        <button
-                          onClick={() => {
-                            setSelectedFactura(f);
-                            setRecaudoInput({
-                              valor: String(f.saldo_pendiente || f.valor),
-                              fecha: new Date().toISOString().split('T')[0],
-                              semana_id: 1,
-                            });
-                            setShowRecaudoModal(true);
-                          }}
-                          className="px-3 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition-all"
-                        >
-                          💰 Abonar
-                        </button>
-                      ) : (
-                        <span className="text-xs text-slate-500 font-mono">
-                          Pagada
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
 
-      {/* Modal: Crear Nueva Factura */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-scaleUp">
-            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
-              <h3 className="text-xl font-bold text-white">
-                ➕ Registrar Nueva Factura
-              </h3>
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="text-slate-400 hover:text-white text-xl font-bold"
-              >
-                ✕
-              </button>
+          <Button
+            onClick={() => setShowCreateModal(true)}
+            variant="secondary"
+            className="shadow-md hover:shadow-lg transition-all font-semibold flex items-center gap-2 self-start sm:self-auto"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Nueva Factura</span>
+          </Button>
+        </div>
+
+        {/* Tarjetas KPI de Cartera */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Total Facturado
+            </span>
+            <div className="text-2xl font-black font-mono text-foreground mt-1">
+              {formatCOP(totalFacturado)}
             </div>
+          </div>
 
-            {formError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl text-xs">
-                {formError}
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+              Total Recaudado
+            </span>
+            <div className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+              {formatCOP(totalRecaudado)}
+            </div>
+          </div>
+
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-primary">
+              Pendiente por Recaudar
+            </span>
+            <div className="text-2xl font-black font-mono text-primary mt-1">
+              {formatCOP(totalPendiente)}
+            </div>
+          </div>
+
+          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+              Facturas Vencidas
+            </span>
+            <div className="text-2xl font-black font-mono text-rose-600 dark:text-rose-400 mt-1">
+              {facturasVencidas.length}{' '}
+              <span className="text-xs font-normal text-rose-600/80 dark:text-rose-300/80">
+                ({formatCOP(facturasVencidas.reduce((a, b) => a + (b.saldo_pendiente || 0), 0))})
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Barra de Filtros y Búsqueda */}
+        <div className="bg-card border border-border rounded-2xl p-4 mb-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-1.5 bg-muted p-1 rounded-xl border border-border">
+            {(
+              [
+                { key: 'todas', label: 'Todas' },
+                { key: 'pendiente', label: 'Pendientes' },
+                { key: 'parcial', label: 'Parciales' },
+                { key: 'vencida', label: 'Vencidas' },
+                { key: 'pagada', label: 'Pagadas' },
+              ] as const
+            ).map((tab) => {
+              const count =
+                tab.key === 'todas'
+                  ? facturas.length
+                  : facturas.filter((f) => f.estado === tab.key).length;
+              const isActive = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                    isActive
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                  }`}
+                >
+                  {tab.label}
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                      isActive ? 'bg-secondary text-secondary-foreground' : 'bg-background text-muted-foreground border border-border'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="relative w-full md:w-72">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Buscar por cliente o factura..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-background border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+            />
+          </div>
+        </div>
+
+        {/* Tabla de Facturas */}
+        <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+          {loading ? (
+            <div className="py-12 text-center text-muted-foreground">
+              <div className="inline-block w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-2" />
+              <p>Cargando facturas de cartera...</p>
+            </div>
+          ) : facturasFiltradas.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">
+              <p className="text-base font-medium text-foreground">
+                No se encontraron facturas con los filtros seleccionados
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-border text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted/50">
+                    <th className="py-3.5 px-4">Número</th>
+                    <th className="py-3.5 px-4">Cliente</th>
+                    <th className="py-3.5 px-4">Emisión</th>
+                    <th className="py-3.5 px-4">Vencimiento</th>
+                    <th className="py-3.5 px-4">Est. Recaudo</th>
+                    <th className="py-3.5 px-4 text-right">Valor Total</th>
+                    <th className="py-3.5 px-4 text-right">Saldo Pendiente</th>
+                    <th className="py-3.5 px-4 text-center">Estado</th>
+                    <th className="py-3.5 px-4 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border text-sm">
+                  {facturasFiltradas.map((f) => (
+                    <tr
+                      key={f.id}
+                      className="hover:bg-accent/50 text-foreground transition-colors"
+                    >
+                      <td className="py-3.5 px-4 font-bold font-mono text-primary">
+                        {f.numero}
+                      </td>
+                      <td className="py-3.5 px-4 font-medium text-foreground">
+                        {f.cliente?.nombre || 'Cliente sin nombre'}
+                      </td>
+                      <td className="py-3.5 px-4 text-xs text-muted-foreground">
+                        {formatFechaEsp(f.fecha_emision)}
+                      </td>
+                      <td className="py-3.5 px-4 text-xs text-muted-foreground">
+                        {formatFechaEsp(f.fecha_vencimiento)}
+                      </td>
+                      <td className="py-3.5 px-4 text-xs text-primary font-medium">
+                        {formatFechaEsp(f.fecha_estimada_recaudo)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono text-muted-foreground">
+                        {formatCOP(f.valor)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                        {formatCOP(f.saldo_pendiente || 0)}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
+                            f.estado === 'pagada'
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                              : f.estado === 'parcial'
+                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                              : f.estado === 'vencida'
+                              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                              : 'bg-primary/10 text-primary border-primary/20'
+                          }`}
+                        >
+                          {f.estado.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        {f.estado !== 'pagada' ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setSelectedFactura(f);
+                              setRecaudoInput({
+                                valor: String(f.saldo_pendiente || f.valor),
+                                fecha: new Date().toISOString().split('T')[0],
+                                semana_id: 1,
+                              });
+                              setShowRecaudoModal(true);
+                            }}
+                            className="text-xs font-semibold shadow-sm"
+                          >
+                            💰 Abonar
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground font-mono">
+                            Pagada
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Modal: Crear Nueva Factura */}
+        {showCreateModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-scaleUp">
+              <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
+                <h3 className="text-xl font-bold text-primary flex items-center gap-2">
+                  <Plus className="w-5 h-5" /> Registrar Nueva Factura
+                </h3>
+                <button
+                  onClick={() => setShowCreateModal(false)}
+                  className="text-muted-foreground hover:text-foreground text-xl font-bold"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-            )}
 
-            <form onSubmit={handleCreateFactura} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Nombre del Cliente *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="ej. SOLLA S.A."
-                  value={newFactura.cliente_nombre}
-                  onChange={(e) =>
-                    setNewFactura({ ...newFactura, cliente_nombre: e.target.value })
-                  }
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
+              {formError && (
+                <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300 rounded-xl text-xs">
+                  {formError}
+                </div>
+              )}
 
-              <div className="grid grid-cols-2 gap-3">
+              <form onSubmit={handleCreateFactura} className="space-y-4 text-sm">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Número de Factura *
+                  <label className="block text-xs font-medium text-foreground mb-1">
+                    Nombre del Cliente *
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="FE-2001"
-                    value={newFactura.numero}
+                    placeholder="ej. SOLLA S.A."
+                    value={newFactura.cliente_nombre}
                     onChange={(e) =>
-                      setNewFactura({ ...newFactura, numero: e.target.value })
+                      setNewFactura({ ...newFactura, cliente_nombre: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500"
+                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      Número de Factura *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="FE-2001"
+                      value={newFactura.numero}
+                      onChange={(e) =>
+                        setNewFactura({ ...newFactura, numero: e.target.value })
+                      }
+                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      Valor ($ COP) *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      placeholder="50000000"
+                      value={newFactura.valor}
+                      onChange={(e) =>
+                        setNewFactura({ ...newFactura, valor: e.target.value })
+                      }
+                      className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      Emisión
+                    </label>
+                    <input
+                      type="date"
+                      value={newFactura.fecha_emision}
+                      onChange={(e) =>
+                        setNewFactura({ ...newFactura, fecha_emision: e.target.value })
+                      }
+                      className="w-full px-2.5 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      Vencimiento
+                    </label>
+                    <input
+                      type="date"
+                      value={newFactura.fecha_vencimiento}
+                      onChange={(e) =>
+                        setNewFactura({ ...newFactura, fecha_vencimiento: e.target.value })
+                      }
+                      className="w-full px-2.5 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-foreground mb-1">
+                      Est. Recaudo
+                    </label>
+                    <input
+                      type="date"
+                      value={newFactura.fecha_estimada_recaudo}
+                      onChange={(e) =>
+                        setNewFactura({
+                          ...newFactura,
+                          fecha_estimada_recaudo: e.target.value,
+                        })
+                      }
+                      className="w-full px-2.5 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowCreateModal(false)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" variant="default" className="font-semibold shadow-md">
+                    Guardar Factura
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Registrar Abono / Recaudo */}
+        {showRecaudoModal && selectedFactura && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-6 shadow-2xl animate-scaleUp">
+              <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
+                <h3 className="text-xl font-bold text-primary flex items-center gap-2">
+                  <DollarSign className="w-5 h-5 text-emerald-600" /> Registrar Recaudo
+                </h3>
+                <button
+                  onClick={() => setShowRecaudoModal(false)}
+                  className="text-muted-foreground hover:text-foreground text-xl font-bold"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="bg-muted p-3.5 rounded-xl border border-border mb-4 text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Factura:</span>
+                  <span className="font-bold text-primary font-mono">
+                    {selectedFactura.numero}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Cliente:</span>
+                  <span className="text-foreground font-medium">
+                    {selectedFactura.cliente?.nombre}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Saldo Pendiente Actual:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                    {formatCOP(selectedFactura.saldo_pendiente || selectedFactura.valor)}
+                  </span>
+                </div>
+              </div>
+
+              {formError && (
+                <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300 rounded-xl text-xs">
+                  {formError}
+                </div>
+              )}
+
+              <form onSubmit={handleRegistrarRecaudo} className="space-y-4 text-sm">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Valor ($ COP) *
+                  <label className="block text-xs font-medium text-foreground mb-1">
+                    Monto a Abonar ($ COP) *
                   </label>
                   <input
                     type="number"
                     required
                     min="1"
-                    placeholder="50000000"
-                    value={newFactura.valor}
+                    max={selectedFactura.saldo_pendiente || selectedFactura.valor}
+                    value={recaudoInput.valor}
                     onChange={(e) =>
-                      setNewFactura({ ...newFactura, valor: e.target.value })
+                      setRecaudoInput({ ...recaudoInput, valor: e.target.value })
                     }
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Emisión
-                  </label>
-                  <input
-                    type="date"
-                    value={newFactura.fecha_emision}
-                    onChange={(e) =>
-                      setNewFactura({ ...newFactura, fecha_emision: e.target.value })
-                    }
-                    className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500 text-xs"
+                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary font-mono text-base"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Vencimiento
+                  <label className="block text-xs font-medium text-foreground mb-1">
+                    Fecha del Recaudo *
                   </label>
                   <input
                     type="date"
-                    value={newFactura.fecha_vencimiento}
+                    required
+                    value={recaudoInput.fecha}
                     onChange={(e) =>
-                      setNewFactura({ ...newFactura, fecha_vencimiento: e.target.value })
+                      setRecaudoInput({ ...recaudoInput, fecha: e.target.value })
                     }
-                    className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500 text-xs"
+                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Est. Recaudo
-                  </label>
-                  <input
-                    type="date"
-                    value={newFactura.fecha_estimada_recaudo}
-                    onChange={(e) =>
-                      setNewFactura({
-                        ...newFactura,
-                        fecha_estimada_recaudo: e.target.value,
-                      })
-                    }
-                    className="w-full px-2.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500 text-xs"
-                  />
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowRecaudoModal(false)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" variant="secondary" className="font-semibold shadow-md">
+                    Confirmar Abono
+                  </Button>
                 </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30"
-                >
-                  Guardar Factura
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Registrar Abono / Recaudo */}
-      {showRecaudoModal && selectedFactura && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-scaleUp">
-            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
-              <h3 className="text-xl font-bold text-white">
-                💰 Registrar Recaudo
-              </h3>
-              <button
-                onClick={() => setShowRecaudoModal(false)}
-                className="text-slate-400 hover:text-white text-xl font-bold"
-              >
-                ✕
-              </button>
+              </form>
             </div>
-
-            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 mb-4 text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Factura:</span>
-                <span className="font-bold text-indigo-300 font-mono">
-                  {selectedFactura.numero}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Cliente:</span>
-                <span className="text-white font-medium">
-                  {selectedFactura.cliente?.nombre}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Saldo Pendiente Actual:</span>
-                <span className="font-bold text-emerald-400 font-mono">
-                  {formatCOP(selectedFactura.saldo_pendiente || selectedFactura.valor)}
-                </span>
-              </div>
-            </div>
-
-            {formError && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl text-xs">
-                {formError}
-              </div>
-            )}
-
-            <form onSubmit={handleRegistrarRecaudo} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Monto a Abonar ($ COP) *
-                </label>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  max={selectedFactura.saldo_pendiente || selectedFactura.valor}
-                  value={recaudoInput.valor}
-                  onChange={(e) =>
-                    setRecaudoInput({ ...recaudoInput, valor: e.target.value })
-                  }
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500 font-mono text-base"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Fecha del Recaudo *
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={recaudoInput.fecha}
-                  onChange={(e) =>
-                    setRecaudoInput({ ...recaudoInput, fecha: e.target.value })
-                  }
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setShowRecaudoModal(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/30"
-                >
-                  Confirmar Abono
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
+        )}
+      </main>
     </div>
   );
 }

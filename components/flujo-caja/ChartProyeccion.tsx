@@ -22,9 +22,9 @@ export default function ChartProyeccion({
 
   if (!proyecciones || proyecciones.length === 0) {
     return (
-      <div className="w-full bg-slate-900 border border-slate-800 rounded-xl p-8 text-center text-slate-400">
+      <div className="w-full bg-card border border-border rounded-2xl p-8 text-center text-muted-foreground shadow-sm">
         <svg
-          className="w-12 h-12 mx-auto mb-3 text-slate-600 animate-pulse"
+          className="w-12 h-12 mx-auto mb-3 text-primary/40 animate-pulse"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -36,10 +36,10 @@ export default function ChartProyeccion({
             d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
           />
         </svg>
-        <p className="text-lg font-medium text-slate-300">
+        <p className="text-lg font-medium text-foreground">
           No hay datos de proyección disponibles
         </p>
-        <p className="text-sm text-slate-500 mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           Sincronice datos con SIIGO o registre saldos semanales para visualizar la gráfica.
         </p>
       </div>
@@ -65,28 +65,23 @@ export default function ChartProyeccion({
   let maxVal = Math.max(...allValues);
   let minVal = Math.min(...allValues);
 
-  // Asegurar margen superior e inferior
   if (maxVal === minVal) {
     maxVal = maxVal + 100_000_000;
     minVal = minVal - 50_000_000;
   }
   const valRange = maxVal - minVal;
 
-  // Convertir valor a coordenada Y
   const getY = (val: number) => {
     const ratio = (val - minVal) / valRange;
     return paddingTop + chartHeight * (1 - ratio);
   };
 
-  // Coordenada Y de la línea $0 (umbral de déficit)
   const zeroY = getY(0);
   const hasDeficit = minVal < 0;
 
-  // Ancho de cada grupo de semana
   const stepX = chartWidth / proyecciones.length;
   const barWidth = Math.max(8, Math.min(22, stepX * 0.28));
 
-  // Puntos para la línea de Saldo Final
   const pointsSaldoFinal = proyecciones.map((p, i) => {
     const x = paddingLeft + i * stepX + stepX / 2;
     const y = getY(p.saldo_final);
@@ -97,67 +92,65 @@ export default function ChartProyeccion({
     return `${acc} ${idx === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`;
   }, '');
 
-  // Puntos para área sombreada bajo la línea de saldo
   const areaD = `${pathD} L ${pointsSaldoFinal[pointsSaldoFinal.length - 1].x} ${zeroY} L ${pointsSaldoFinal[0].x} ${zeroY} Z`;
 
-  // Datos de la semana actualmente en hover
   const activeData =
     hoveredIndex !== null ? proyecciones[hoveredIndex] : null;
 
   return (
-    <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl backdrop-blur-md">
+    <div className="w-full bg-card border border-border rounded-2xl p-6 shadow-md transition-all duration-300">
       {/* Header del Gráfico con Controles */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-bold text-white tracking-tight">
+            <h3 className="text-xl font-bold text-primary tracking-tight">
               {title}
             </h3>
             {hasDeficit && (
-              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
                 Alerta de Déficit
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Proyección semana a semana considerando recaudo de cartera, egresos recurrentes y compromisos.
           </p>
         </div>
 
         {/* Toggles de Métricas */}
-        <div className="flex flex-wrap items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           <button
             onClick={() => setShowSaldoFinal(!showSaldoFinal)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all ${
               showSaldoFinal
-                ? 'bg-indigo-500/10 border-indigo-500/40 text-indigo-300'
-                : 'bg-slate-800/40 border-slate-700 text-slate-500 line-through'
+                ? 'bg-primary/10 border-primary/40 text-primary font-semibold'
+                : 'bg-muted border-border text-muted-foreground line-through'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400" />
+            <span className="w-2.5 h-2.5 rounded-full bg-primary" />
             Saldo Final
           </button>
           <button
             onClick={() => setShowRecaudo(!showRecaudo)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all ${
               showRecaudo
-                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
-                : 'bg-slate-800/40 border-slate-700 text-slate-500 line-through'
+                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-semibold'
+                : 'bg-muted border-border text-muted-foreground line-through'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" />
+            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
             Recaudo Est.
           </button>
           <button
             onClick={() => setShowEgresos(!showEgresos)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all ${
               showEgresos
-                ? 'bg-rose-500/10 border-rose-500/40 text-rose-300'
-                : 'bg-slate-800/40 border-slate-700 text-slate-500 line-through'
+                ? 'bg-secondary/10 border-secondary/40 text-secondary font-semibold'
+                : 'bg-muted border-border text-muted-foreground line-through'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-sm bg-rose-400" />
+            <span className="w-2.5 h-2.5 rounded-sm bg-secondary" />
             Egresos + Comp.
           </button>
         </div>
@@ -170,16 +163,16 @@ export default function ChartProyeccion({
           className="w-full h-auto min-w-[650px] overflow-visible"
         >
           <defs>
-            {/* Gradiente para área de Saldo Final positivo */}
-            <linearGradient id="gradientSaldo" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#6366f1" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
+            {/* Gradiente Corporativo Pospin para Saldo Final */}
+            <linearGradient id="gradientSaldoPospin" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#2f4f6f" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#2f4f6f" stopOpacity="0.0" />
             </linearGradient>
 
             {/* Gradiente de peligro para déficit */}
-            <linearGradient id="gradientDeficit" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.4" />
-              <stop offset="100%" stopColor="#f43f5e" stopOpacity="0.05" />
+            <linearGradient id="gradientDeficitPospin" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#e11d48" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="#e11d48" stopOpacity="0.05" />
             </linearGradient>
           </defs>
 
@@ -194,17 +187,18 @@ export default function ChartProyeccion({
                   y1={y}
                   x2={width - paddingRight}
                   y2={y}
-                  stroke="#334155"
+                  stroke="currentColor"
+                  className="text-border"
                   strokeDasharray="4 4"
                   strokeOpacity="0.6"
                 />
                 <text
                   x={paddingLeft - 10}
                   y={y + 4}
-                  fill="#94a3b8"
+                  fill="currentColor"
                   fontSize="10"
                   textAnchor="end"
-                  className="font-mono"
+                  className="font-mono text-muted-foreground fill-muted-foreground"
                 >
                   {formatCOPAbreviado(val)}
                 </text>
@@ -212,7 +206,7 @@ export default function ChartProyeccion({
             );
           })}
 
-          {/* Línea de Umbral $0 COP (Red Dash when zero in range) */}
+          {/* Línea de Umbral $0 COP */}
           {zeroY >= paddingTop && zeroY <= height - paddingBottom && (
             <g>
               <line
@@ -220,14 +214,14 @@ export default function ChartProyeccion({
                 y1={zeroY}
                 x2={width - paddingRight}
                 y2={zeroY}
-                stroke="#f43f5e"
+                stroke="#e11d48"
                 strokeWidth="1.5"
                 strokeDasharray="6 3"
               />
               <text
                 x={width - paddingRight + 5}
                 y={zeroY + 3}
-                fill="#f43f5e"
+                fill="#e11d48"
                 fontSize="10"
                 fontWeight="bold"
               >
@@ -263,8 +257,9 @@ export default function ChartProyeccion({
                     y={paddingTop}
                     width={stepX}
                     height={chartHeight}
-                    fill="#38bdf8"
-                    fillOpacity="0.06"
+                    fill="currentColor"
+                    className="text-primary"
+                    fillOpacity="0.08"
                     rx="4"
                   />
                 )}
@@ -277,20 +272,20 @@ export default function ChartProyeccion({
                     width={barWidth}
                     height={Math.max(2, zeroY - recaudoY)}
                     fill="#10b981"
-                    fillOpacity={isHovered ? 0.95 : 0.75}
+                    fillOpacity={isHovered ? 0.95 : 0.8}
                     rx="3"
                   />
                 )}
 
-                {/* Barra Egresos + Compromisos */}
+                {/* Barra Egresos + Compromisos (Bronce Pospin / Rose) */}
                 {showEgresos && egresosTotal > 0 && (
                   <rect
                     x={egresosX}
                     y={egresosY}
                     width={barWidth}
                     height={Math.max(2, zeroY - egresosY)}
-                    fill="#f43f5e"
-                    fillOpacity={isHovered ? 0.95 : 0.75}
+                    fill="#ca5b12"
+                    fillOpacity={isHovered ? 0.95 : 0.8}
                     rx="3"
                   />
                 )}
@@ -299,19 +294,21 @@ export default function ChartProyeccion({
                 <text
                   x={centerX}
                   y={height - paddingBottom + 20}
-                  fill={p.deficit ? '#f43f5e' : isHovered ? '#ffffff' : '#94a3b8'}
+                  fill="currentColor"
                   fontSize="11"
                   fontWeight={p.deficit || isHovered ? 'bold' : 'normal'}
                   textAnchor="middle"
+                  className={p.deficit ? 'fill-rose-500 font-bold' : isHovered ? 'fill-primary font-bold' : 'fill-muted-foreground'}
                 >
                   Sem {p.semana}
                 </text>
                 <text
                   x={centerX}
                   y={height - paddingBottom + 34}
-                  fill="#64748b"
+                  fill="currentColor"
                   fontSize="9"
                   textAnchor="middle"
+                  className="fill-muted-foreground/70"
                 >
                   {p.fecha_inicio ? p.fecha_inicio.slice(5) : ''}
                 </text>
@@ -323,7 +320,7 @@ export default function ChartProyeccion({
           {showSaldoFinal && (
             <path
               d={areaD}
-              fill={hasDeficit ? 'url(#gradientDeficit)' : 'url(#gradientSaldo)'}
+              fill={hasDeficit ? 'url(#gradientDeficitPospin)' : 'url(#gradientSaldoPospin)'}
             />
           )}
 
@@ -332,7 +329,7 @@ export default function ChartProyeccion({
             <path
               d={pathD}
               fill="none"
-              stroke="#6366f1"
+              stroke="#2f4f6f"
               strokeWidth="3"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -351,20 +348,19 @@ export default function ChartProyeccion({
                     cx={pt.x}
                     cy={pt.y}
                     r={isHovered ? 7 : 4}
-                    fill={isDeficit ? '#f43f5e' : '#6366f1'}
-                    stroke="#0f172a"
+                    fill={isDeficit ? '#e11d48' : '#2f4f6f'}
+                    stroke="currentColor"
+                    className="text-card transition-all duration-150 cursor-pointer"
                     strokeWidth={isHovered ? 3 : 2}
-                    className="transition-all duration-150 cursor-pointer"
                     onMouseEnter={() => setHoveredIndex(i)}
                     onMouseLeave={() => setHoveredIndex(null)}
                     onClick={() => onSelectSemana && onSelectSemana(pt.semana)}
                   />
-                  {/* Badge de Déficit si aplica */}
                   {isDeficit && (
                     <text
                       x={pt.x}
                       y={pt.y - 10}
-                      fill="#f43f5e"
+                      fill="#e11d48"
                       fontSize="10"
                       fontWeight="bold"
                       textAnchor="middle"
@@ -380,21 +376,21 @@ export default function ChartProyeccion({
 
       {/* Tooltip Detallado al hacer Hover */}
       {activeData && (
-        <div className="mt-4 bg-slate-800/90 border border-slate-700/80 rounded-xl p-4 shadow-xl flex flex-wrap items-center justify-between gap-4 animate-fadeIn">
+        <div className="mt-4 bg-accent/80 border border-border rounded-xl p-4 shadow-md flex flex-wrap items-center justify-between gap-4 animate-fadeIn">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-white">
+              <span className="text-sm font-bold text-foreground">
                 Semana {activeData.semana} ({activeData.anio})
               </span>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-muted-foreground">
                 {formatFechaEsp(activeData.fecha_inicio)} – {formatFechaEsp(activeData.fecha_fin)}
               </span>
               {activeData.deficit ? (
-                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30">
                   Déficit
                 </span>
               ) : (
-                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
                   Saludable
                 </span>
               )}
@@ -403,28 +399,28 @@ export default function ChartProyeccion({
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
             <div>
-              <span className="block text-slate-400">Saldo Inicial</span>
-              <span className="font-mono font-semibold text-slate-200">
+              <span className="block text-muted-foreground">Saldo Inicial</span>
+              <span className="font-mono font-semibold text-foreground">
                 {formatCOP(activeData.saldo_inicial)}
               </span>
             </div>
             <div>
-              <span className="block text-emerald-400">Recaudo Est.</span>
-              <span className="font-mono font-semibold text-emerald-300">
+              <span className="block text-emerald-600 dark:text-emerald-400">Recaudo Est.</span>
+              <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
                 + {formatCOP(activeData.recaudo)}
               </span>
             </div>
             <div>
-              <span className="block text-rose-400">Egresos + Comp.</span>
-              <span className="font-mono font-semibold text-rose-300">
+              <span className="block text-secondary font-medium">Egresos + Comp.</span>
+              <span className="font-mono font-semibold text-secondary">
                 - {formatCOP(activeData.egresos + activeData.compromisos)}
               </span>
             </div>
             <div>
-              <span className="block text-indigo-400 font-medium">Saldo Final</span>
+              <span className="block text-primary font-semibold">Saldo Final</span>
               <span
                 className={`font-mono font-bold text-sm ${
-                  activeData.saldo_final < 0 ? 'text-rose-400' : 'text-indigo-300'
+                  activeData.saldo_final < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-primary'
                 }`}
               >
                 {formatCOP(activeData.saldo_final)}
