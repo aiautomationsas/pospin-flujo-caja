@@ -1,9 +1,10 @@
-import type { ProyeccionSemanal, FacturaConCliente, Cliente, SiigoSyncLog } from '@/types/flujo_caja';
+import type { ProyeccionSemanal, FacturaConCliente, Cliente, SiigoSyncLog, CuentaBancaria } from '@/types/flujo_caja';
 
 export const CACHE_KEY_PROYECCIONES = 'pospin_flujo_caja_proyecciones_v1';
 export const CACHE_KEY_FACTURAS = 'pospin_flujo_caja_facturas_v1';
 export const CACHE_KEY_CLIENTES = 'pospin_flujo_caja_clientes_v1';
 export const CACHE_KEY_LOGS = 'pospin_flujo_caja_logs_v1';
+export const CACHE_KEY_CUENTAS = 'pospin_flujo_caja_cuentas_v1';
 
 export const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos en milisegundos
 
@@ -16,6 +17,7 @@ let inMemoryProyecciones: CachePayload<ProyeccionSemanal[]> | null = null;
 let inMemoryFacturas: CachePayload<FacturaConCliente[]> | null = null;
 let inMemoryClientes: CachePayload<Cliente[]> | null = null;
 let inMemoryLogs: CachePayload<SiigoSyncLog[]> | null = null;
+let inMemoryCuentas: CachePayload<CuentaBancaria[]> | null = null;
 
 export function isCacheValid(timestamp: number): boolean {
   return Date.now() - timestamp < CACHE_TTL_MS;
@@ -56,6 +58,45 @@ export function setCachedProyecciones(data: ProyeccionSemanal[]): void {
       window.sessionStorage.setItem(CACHE_KEY_PROYECCIONES, JSON.stringify(payload));
     } catch (error) {
       console.warn('[flujoCajaCache] Error guardando proyecciones:', error);
+    }
+  }
+}
+
+// ── CUENTAS BANCARIAS CACHE ──
+export function getCachedCuentas(): CuentaBancaria[] | null {
+  if (inMemoryCuentas && isCacheValid(inMemoryCuentas.timestamp)) {
+    return inMemoryCuentas.data;
+  }
+
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(CACHE_KEY_CUENTAS);
+    if (!raw) return null;
+
+    const parsed: CachePayload<CuentaBancaria[]> = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.data) && isCacheValid(parsed.timestamp)) {
+      inMemoryCuentas = parsed;
+      return parsed.data;
+    }
+  } catch (error) {
+    console.warn('[flujoCajaCache] Error leyendo cuentas bancarias:', error);
+  }
+
+  return null;
+}
+
+export function setCachedCuentas(data: CuentaBancaria[]): void {
+  const payload: CachePayload<CuentaBancaria[]> = { data, timestamp: Date.now() };
+  inMemoryCuentas = payload;
+
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      window.sessionStorage.setItem(CACHE_KEY_CUENTAS, JSON.stringify(payload));
+    } catch (error) {
+      console.warn('[flujoCajaCache] Error guardando cuentas bancarias:', error);
     }
   }
 }
@@ -194,6 +235,7 @@ export function clearAllFlujoCajaCache(): void {
   inMemoryFacturas = null;
   inMemoryClientes = null;
   inMemoryLogs = null;
+  inMemoryCuentas = null;
 
   if (typeof window !== 'undefined' && window.sessionStorage) {
     try {
@@ -201,6 +243,7 @@ export function clearAllFlujoCajaCache(): void {
       window.sessionStorage.removeItem(CACHE_KEY_FACTURAS);
       window.sessionStorage.removeItem(CACHE_KEY_CLIENTES);
       window.sessionStorage.removeItem(CACHE_KEY_LOGS);
+      window.sessionStorage.removeItem(CACHE_KEY_CUENTAS);
     } catch (error) {
       console.warn('[flujoCajaCache] Error al limpiar todo el caché:', error);
     }

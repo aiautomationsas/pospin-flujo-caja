@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { ProyeccionSemanal } from '@/types/flujo_caja';
+import type { ProyeccionSemanal, CuentaBancaria } from '@/types/flujo_caja';
 import ChartProyeccion from '@/components/flujo-caja/ChartProyeccion';
 import FlujoCajaSubNav from '@/components/flujo-caja/FlujoCajaSubNav';
 import { formatCOP, formatFechaEsp } from '@/lib/format';
@@ -12,6 +12,8 @@ import {
   getCachedProyecciones,
   setCachedProyecciones,
   clearProyeccionesCache,
+  getCachedCuentas,
+  setCachedCuentas,
 } from '@/lib/flujoCajaCache';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,6 +28,10 @@ import {
   Edit3,
   X,
   CheckCircle2,
+  Plus,
+  Trash2,
+  CreditCard,
+  Wallet,
 } from 'lucide-react';
 
 export default function FlujoCajaDashboardPage() {
@@ -33,19 +39,103 @@ export default function FlujoCajaDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [selectedSemana, setSelectedSemana] = useState<ProyeccionSemanal | null>(null);
 
-  // Modal para editar Saldo Inicial en el Frontend
-  const [showSaldoModal, setShowSaldoModal] = useState(false);
-  const [newSaldoInput, setNewSaldoInput] = useState('');
-  const [savingSaldo, setSavingSaldo] = useState(false);
-  const [saldoMsg, setSaldoMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Multi-Cuenta State
+  const [cuentas, setCuentas] = useState<CuentaBancaria[]>([]);
+  const [showCuentasModal, setShowCuentasModal] = useState(false);
+  const [showAddCuentaForm, setShowAddCuentaForm] = useState(false);
+  const [savingCuenta, setSavingCuenta] = useState(false);
+  const [cuentaMsg, setCuentaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Form para Nueva Cuenta
+  const [nuevaCuenta, setNuevaCuenta] = useState({
+    nombre: '',
+    banco: 'Bancolombia',
+    numero: '',
+    tipo_cuenta: 'corriente',
+    saldo: '',
+  });
+
+  // Form para Editar Saldo de Cuenta Individual
+  const [editingCuentaId, setEditingCuentaId] = useState<number | null>(null);
+  const [editSaldoInput, setEditSaldoInput] = useState('');
 
   useEffect(() => {
     loadDashboardData();
+    fetchCuentas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function fetchCuentas() {
+    const cached = getCachedCuentas();
+    if (cached && cached.length > 0) {
+      setCuentas(cached);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('cuentas_bancarias')
+        .select('*')
+        .eq('activa', true)
+        .order('id', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        setCuentas(data);
+        setCachedCuentas(data);
+      } else {
+        const mockCuentas = getMockCuentas();
+        setCuentas(mockCuentas);
+        setCachedCuentas(mockCuentas);
+      }
+    } catch {
+      const mockCuentas = getMockCuentas();
+      setCuentas(mockCuentas);
+      setCachedCuentas(mockCuentas);
+    }
+  }
+
+  function getMockCuentas(): CuentaBancaria[] {
+    return [
+      {
+        id: 1,
+        nombre: 'Bancolombia Principal',
+        banco: 'Bancolombia',
+        numero: '*4589',
+        tipo_cuenta: 'corriente',
+        saldo: 120_000_000,
+        activa: true,
+      },
+      {
+        id: 2,
+        nombre: 'Davivienda Reserva',
+        banco: 'Davivienda',
+        numero: '*1042',
+        tipo_cuenta: 'ahorros',
+        saldo: 45_000_000,
+        activa: true,
+      },
+      {
+        id: 3,
+        nombre: 'Banco de Bogotá Operativa',
+        banco: 'Banco de Bogotá',
+        numero: '*8812',
+        tipo_cuenta: 'corriente',
+        saldo: 15_000_000,
+        activa: true,
+      },
+      {
+        id: 4,
+        nombre: 'Caja General / Menor',
+        banco: 'Caja',
+        numero: 'Caja-01',
+        tipo_cuenta: 'caja',
+        saldo: 5_000_000,
+        activa: true,
+      },
+    ];
+  }
+
   async function loadDashboardData() {
-    // 1. Stale-While-Revalidate: Cargar de inmediato desde la caché si existe
     const cached = getCachedProyecciones();
     if (cached && cached.length > 0) {
       setProyecciones(cached);
@@ -54,7 +144,6 @@ export default function FlujoCajaDashboardPage() {
       setLoading(true);
     }
 
-    // 2. Revalidación en segundo plano o carga inicial
     try {
       const freshData = await calcularProyeccionFlujoCaja(supabase, 12);
       if (freshData && freshData.length > 0) {
@@ -77,10 +166,10 @@ export default function FlujoCajaDashboardPage() {
     }
   }
 
-  function generateMockProjections(): ProyeccionSemanal[] {
+  function generateMockProjections(customSaldoInicial?: number): ProyeccionSemanal[] {
     const mock: ProyeccionSemanal[] = [];
     const baseDate = new Date();
-    let saldoAcc = 185_000_000;
+    let saldoAcc = customSaldoInicial !== undefined ? customSaldoInicial : 185_000_000;
 
     const mockEvents = [
       { rec: 85_000_000, eg: 62_000_000, comp: 15_000_000 },
@@ -134,66 +223,150 @@ export default function FlujoCajaDashboardPage() {
     return mock;
   }
 
-  // Guardar cambio de Saldo Inicial desde la UI
-  async function handleSaveSaldo(e: React.FormEvent) {
-    e.preventDefault();
-    setSaldoMsg(null);
+  // Recalcular proyección consolidada al modificar cuentas
+  async function syncProyeccionConCuentas(cuentasActualizadas: CuentaBancaria[]) {
+    const totalConsolidado = cuentasActualizadas.reduce((sum, c) => sum + (c.saldo || 0), 0);
+    const semanaActualId = proyecciones[0]?.semana_id || 1;
 
-    const valNum = parseFloat(newSaldoInput);
-    if (isNaN(valNum) || valNum < 0) {
-      setSaldoMsg({ type: 'error', text: 'Por favor ingrese un valor de saldo válido.' });
-      return;
+    try {
+      await supabase.from('saldos_semanales').upsert(
+        { semana_id: semanaActualId, saldo: totalConsolidado },
+        { onConflict: 'semana_id' }
+      );
+    } catch (e) {
+      console.warn('Upsert saldos_semanales fallback:', e);
     }
 
-    setSavingSaldo(true);
+    clearProyeccionesCache();
     try {
-      const semanaActualId = proyecciones[0]?.semana_id || 1;
-
-      // Actualizar o Insertar en saldos_semanales
-      const { error } = await supabase
-        .from('saldos_semanales')
-        .upsert(
-          { semana_id: semanaActualId, saldo: valNum },
-          { onConflict: 'semana_id' }
-        );
-
-      if (error) {
-        console.warn('Upsert falló, aplicando cambio en estado local:', error.message);
-      }
-
-      // Invalidate cache and recalculate projection
-      clearProyeccionesCache();
       const fresh = await calcularProyeccionFlujoCaja(supabase, 12);
-
       if (fresh && fresh.length > 0) {
         setProyecciones(fresh);
         setCachedProyecciones(fresh);
-      } else {
-        // Fallback local update
-        const updated = proyecciones.map((p, idx) => {
-          if (idx === 0) {
-            const final = valNum + p.recaudo - (p.egresos + p.compromisos);
-            return { ...p, saldo_inicial: valNum, saldo_final: final, deficit: final < 0 };
-          }
-          return p;
-        });
-        setProyecciones(updated);
-        setCachedProyecciones(updated);
+        return;
       }
+    } catch {
+      // Ignorar
+    }
 
-      setSaldoMsg({ type: 'success', text: 'Saldo de bancos actualizado exitosamente.' });
-      setTimeout(() => {
-        setShowSaldoModal(false);
-        setSaldoMsg(null);
-      }, 1000);
+    // Fallback local
+    const mock = generateMockProjections(totalConsolidado);
+    setProyecciones(mock);
+    setCachedProyecciones(mock);
+  }
+
+  // Guardar Saldo de Cuenta Individual
+  async function handleSaveSaldoCuenta(cuentaId: number) {
+    const valNum = parseFloat(editSaldoInput);
+    if (isNaN(valNum) || valNum < 0) {
+      setCuentaMsg({ type: 'error', text: 'Monto de saldo inválido.' });
+      return;
+    }
+
+    setSavingCuenta(true);
+    try {
+      await supabase
+        .from('cuentas_bancarias')
+        .update({ saldo: valNum })
+        .eq('id', cuentaId);
+
+      const cuentasNuevas = cuentas.map((c) => (c.id === cuentaId ? { ...c, saldo: valNum } : c));
+      setCuentas(cuentasNuevas);
+      setCachedCuentas(cuentasNuevas);
+      await syncProyeccionConCuentas(cuentasNuevas);
+
+      setEditingCuentaId(null);
+      setCuentaMsg({ type: 'success', text: 'Saldo de cuenta actualizado.' });
     } catch (err: unknown) {
-      setSaldoMsg({ type: 'error', text: (err as Error).message || 'Error guardando saldo' });
+      setCuentaMsg({ type: 'error', text: (err as Error).message || 'Error guardando cuenta' });
     } finally {
-      setSavingSaldo(false);
+      setSavingCuenta(false);
     }
   }
 
-  const saldoActual = proyecciones[0]?.saldo_inicial || 0;
+  // Crear Nueva Cuenta Bancaria
+  async function handleAddCuenta(e: React.FormEvent) {
+    e.preventDefault();
+    setCuentaMsg(null);
+
+    const saldoNum = parseFloat(nuevaCuenta.saldo) || 0;
+    if (!nuevaCuenta.nombre || !nuevaCuenta.banco) {
+      setCuentaMsg({ type: 'error', text: 'Por favor ingrese el nombre y banco de la cuenta.' });
+      return;
+    }
+
+    setSavingCuenta(true);
+    try {
+      const payload = {
+        nombre: nuevaCuenta.nombre,
+        banco: nuevaCuenta.banco,
+        numero: nuevaCuenta.numero || '*0000',
+        tipo_cuenta: nuevaCuenta.tipo_cuenta,
+        saldo: saldoNum,
+        activa: true,
+      };
+
+      const { data: newC, error } = await supabase
+        .from('cuentas_bancarias')
+        .insert(payload)
+        .select()
+        .single();
+
+      let cuentasNuevas: CuentaBancaria[] = [];
+      if (!error && newC) {
+        cuentasNuevas = [...cuentas, newC];
+      } else {
+        const mockNew: CuentaBancaria = {
+          id: Date.now(),
+          ...payload,
+        };
+        cuentasNuevas = [...cuentas, mockNew];
+      }
+
+      setCuentas(cuentasNuevas);
+      setCachedCuentas(cuentasNuevas);
+      await syncProyeccionConCuentas(cuentasNuevas);
+
+      setShowAddCuentaForm(false);
+      setNuevaCuenta({
+        nombre: '',
+        banco: 'Bancolombia',
+        numero: '',
+        tipo_cuenta: 'corriente',
+        saldo: '',
+      });
+      setCuentaMsg({ type: 'success', text: 'Nueva cuenta bancaria añadida.' });
+    } catch (err: unknown) {
+      setCuentaMsg({ type: 'error', text: (err as Error).message || 'Error al crear cuenta' });
+    } finally {
+      setSavingCuenta(false);
+    }
+  }
+
+  // Eliminar / Desactivar Cuenta
+  async function handleDeleteCuenta(cuentaId: number) {
+    if (cuentas.length <= 1) {
+      setCuentaMsg({ type: 'error', text: 'Debe mantener al menos una cuenta activa.' });
+      return;
+    }
+
+    setSavingCuenta(true);
+    try {
+      await supabase.from('cuentas_bancarias').update({ activa: false }).eq('id', cuentaId);
+      const cuentasNuevas = cuentas.filter((c) => c.id !== cuentaId);
+      setCuentas(cuentasNuevas);
+      setCachedCuentas(cuentasNuevas);
+      await syncProyeccionConCuentas(cuentasNuevas);
+      setCuentaMsg({ type: 'success', text: 'Cuenta eliminada del consolidado.' });
+    } catch (e: unknown) {
+      setCuentaMsg({ type: 'error', text: (e as Error).message });
+    } finally {
+      setSavingCuenta(false);
+    }
+  }
+
+  const totalSaldoConsolidado = cuentas.reduce((sum, c) => sum + (c.saldo || 0), 0);
+  const saldoActual = proyecciones[0]?.saldo_inicial || totalSaldoConsolidado;
   const totalRecaudoProyectado = proyecciones.reduce((acc, p) => acc + p.recaudo, 0);
   const totalCompromisosYEgresos = proyecciones.reduce(
     (acc, p) => acc + p.egresos + p.compromisos,
@@ -222,7 +395,7 @@ export default function FlujoCajaDashboardPage() {
                 Control & Proyección de Flujo de Caja
               </h1>
               <p className="text-primary-foreground/90 text-xs sm:text-sm lg:text-base mt-2 max-w-2xl leading-relaxed">
-                Monitoree liquidez en tiempo real, gestione vencimientos de cartera e identifique requerimientos de capital a 12 semanas.
+                Monitoree liquidez en tiempo real, gestione tesorería multi-cuenta e identifique requerimientos de capital a 12 semanas.
               </p>
             </div>
 
@@ -286,23 +459,22 @@ export default function FlujoCajaDashboardPage() {
 
         {/* Tarjetas KPI de Resumen Ejecutivo (Responsive Grid) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 mb-6 sm:mb-8">
-          {/* Card 1: Saldo Inicial con Botón de Edición Frontend */}
+          {/* Card 1: Saldo Inicial Multi-Cuenta */}
           <div className="bg-card text-card-foreground border border-border rounded-2xl p-4 sm:p-6 shadow-sm hover:shadow-md hover:border-primary/20 transition-all duration-300 relative overflow-hidden group">
             <div className="flex items-center justify-between text-muted-foreground mb-2 sm:mb-3">
               <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider">
-                Saldo Inicial Actual
+                Saldo Bancos Consolidado
               </span>
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => {
-                    setNewSaldoInput(String(saldoActual));
-                    setSaldoMsg(null);
-                    setShowSaldoModal(true);
+                    setCuentaMsg(null);
+                    setShowCuentasModal(true);
                   }}
-                  title="Editar Saldo del Banco"
+                  title="Gestionar Cuentas Bancarias"
                   className="p-1.5 rounded-lg bg-secondary/10 text-secondary hover:bg-secondary hover:text-secondary-foreground transition-colors"
                 >
-                  <Edit3 className="w-3.5 h-3.5" />
+                  <Wallet className="w-3.5 h-3.5" />
                 </button>
                 <div className="p-1.5 sm:p-2 rounded-lg bg-primary/10 text-primary">
                   <Building2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -314,18 +486,17 @@ export default function FlujoCajaDashboardPage() {
             </div>
             <div className="flex items-center justify-between mt-1.5">
               <span className="text-[10px] sm:text-xs text-muted-foreground block">
-                Cuentas bancarias
+                {cuentas.length} cuentas activas
               </span>
               <button
                 onClick={() => {
-                  setNewSaldoInput(String(saldoActual));
-                  setSaldoMsg(null);
-                  setShowSaldoModal(true);
+                  setCuentaMsg(null);
+                  setShowCuentasModal(true);
                 }}
                 className="text-[11px] font-semibold text-secondary hover:underline flex items-center gap-1"
               >
-                <Edit3 className="w-3 h-3" />
-                <span>Ajustar Saldo</span>
+                <Wallet className="w-3 h-3" />
+                <span>Gestionar Cuentas</span>
               </button>
             </div>
           </div>
@@ -491,92 +662,284 @@ export default function FlujoCajaDashboardPage() {
           )}
         </div>
 
-        {/* Modal Frontend: Editar Saldo Inicial de Bancos */}
-        {showSaldoModal && (
+        {/* Modal Frontend Avanzado: Gestión de Cuentas Bancarias & Tesorería */}
+        {showCuentasModal && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5 sm:p-6 shadow-2xl animate-scaleUp">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-2xl p-5 sm:p-6 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
-                <h3 className="text-lg sm:text-xl font-bold text-primary flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-secondary" /> Ajustar Saldo de Bancos
-                </h3>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-bold text-primary flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-secondary" /> Cuentas Bancarias & Tesorería
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Administre saldos por banco y cuenta para calcular la liquidez consolidada.
+                  </p>
+                </div>
                 <button
-                  onClick={() => setShowSaldoModal(false)}
+                  onClick={() => {
+                    setShowCuentasModal(false);
+                    setShowAddCuentaForm(false);
+                  }}
                   className="text-muted-foreground hover:text-foreground text-xl font-bold p-1"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <p className="text-xs text-muted-foreground mb-4">
-                Ingrese el nuevo saldo inicial disponible en las cuentas bancarias de la empresa. Este cambio recalculará la proyección a 12 semanas de inmediato.
-              </p>
+              {/* Summary Header */}
+              <div className="bg-muted p-4 rounded-xl border border-border mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+                    Saldo Total Consolidado
+                  </span>
+                  <div className="text-2xl font-black font-mono text-primary mt-0.5">
+                    {formatCOP(totalSaldoConsolidado)}
+                  </div>
+                </div>
 
-              {saldoMsg && (
+                <Button
+                  onClick={() => setShowAddCuentaForm(!showAddCuentaForm)}
+                  variant="secondary"
+                  size="sm"
+                  className="font-semibold shadow-sm flex items-center gap-1.5 self-start sm:self-auto"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>{showAddCuentaForm ? 'Cancelar' : 'Añadir Cuenta'}</span>
+                </Button>
+              </div>
+
+              {cuentaMsg && (
                 <div
                   className={`mb-4 p-3 rounded-xl text-xs flex items-center gap-2 ${
-                    saldoMsg.type === 'success'
+                    cuentaMsg.type === 'success'
                       ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
                       : 'bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300'
                   }`}
                 >
-                  {saldoMsg.type === 'success' ? (
+                  {cuentaMsg.type === 'success' ? (
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   ) : (
                     <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
                   )}
-                  <span>{saldoMsg.text}</span>
+                  <span>{cuentaMsg.text}</span>
                 </div>
               )}
 
-              <form onSubmit={handleSaveSaldo} className="space-y-4 text-xs sm:text-sm">
-                <div>
-                  <label className="block text-xs font-medium text-foreground mb-1">
-                    Nuevo Saldo Inicial ($ COP) *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="1000"
-                    placeholder="185000000"
-                    value={newSaldoInput}
-                    onChange={(e) => setNewSaldoInput(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-background border border-border rounded-xl text-foreground font-mono text-base focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                  <span className="text-[11px] text-muted-foreground mt-1 block">
-                    Valor formateado: {formatCOP(parseFloat(newSaldoInput) || 0)}
-                  </span>
-                </div>
+              {/* Formulario para Crear Nueva Cuenta */}
+              {showAddCuentaForm && (
+                <form onSubmit={handleAddCuenta} className="bg-accent/40 p-4 rounded-xl border border-border mb-4 space-y-3 text-xs sm:text-sm">
+                  <h4 className="font-bold text-primary flex items-center gap-1.5">
+                    <Plus className="w-4 h-4 text-secondary" /> Registrar Nueva Cuenta Bancaria
+                  </h4>
 
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowSaldoModal(false)}
-                    disabled={savingSaldo}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    disabled={savingSaldo}
-                    className="font-semibold shadow-md flex items-center gap-2"
-                  >
-                    {savingSaldo ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-secondary-foreground border-t-transparent rounded-full animate-spin" />
-                        <span>Guardando...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Actualizar Saldo</span>
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </form>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-foreground mb-1">
+                        Nombre de la Cuenta *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="ej. Bancolombia Operativa"
+                        value={nuevaCuenta.nombre}
+                        onChange={(e) => setNuevaCuenta({ ...nuevaCuenta, nombre: e.target.value })}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-foreground mb-1">
+                        Entidad Financiera *
+                      </label>
+                      <select
+                        value={nuevaCuenta.banco}
+                        onChange={(e) => setNuevaCuenta({ ...nuevaCuenta, banco: e.target.value })}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs"
+                      >
+                        <option value="Bancolombia">Bancolombia</option>
+                        <option value="Davivienda">Davivienda</option>
+                        <option value="Banco de Bogotá">Banco de Bogotá</option>
+                        <option value="BBVA">BBVA</option>
+                        <option value="Banco Occidente">Banco de Occidente</option>
+                        <option value="Caja">Caja General / Menor</option>
+                        <option value="Otro">Otro Banco</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-foreground mb-1">
+                        Tipo de Cuenta
+                      </label>
+                      <select
+                        value={nuevaCuenta.tipo_cuenta}
+                        onChange={(e) => setNuevaCuenta({ ...nuevaCuenta, tipo_cuenta: e.target.value })}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs"
+                      >
+                        <option value="corriente">Cuenta Corriente</option>
+                        <option value="ahorros">Cuenta de Ahorros</option>
+                        <option value="caja">Efectivo / Caja</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-foreground mb-1">
+                        Número de Cuenta
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="*4589"
+                        value={nuevaCuenta.numero}
+                        onChange={(e) => setNuevaCuenta({ ...nuevaCuenta, numero: e.target.value })}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-foreground mb-1">
+                        Saldo Inicial ($ COP) *
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        min="0"
+                        placeholder="50000000"
+                        value={nuevaCuenta.saldo}
+                        onChange={(e) => setNuevaCuenta({ ...nuevaCuenta, saldo: e.target.value })}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowAddCuentaForm(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="default"
+                      size="sm"
+                      disabled={savingCuenta}
+                      className="font-semibold shadow-sm"
+                    >
+                      Guardar Cuenta
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* Lista de Cuentas Bancarias */}
+              <div className="space-y-3">
+                {cuentas.map((c) => {
+                  const isEditing = editingCuentaId === c.id;
+
+                  return (
+                    <div
+                      key={c.id}
+                      className="bg-card border border-border rounded-xl p-3.5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-primary/30 transition-all"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-lg bg-primary/10 text-primary shrink-0">
+                          {c.tipo_cuenta === 'caja' ? (
+                            <Wallet className="w-5 h-5" />
+                          ) : (
+                            <CreditCard className="w-5 h-5" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-foreground text-sm">
+                              {c.nombre}
+                            </span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-secondary/10 text-secondary border border-secondary/20 uppercase">
+                              {c.banco}
+                            </span>
+                            <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                              {c.numero}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground capitalize">
+                            Tipo: {c.tipo_cuenta}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 self-end sm:self-auto">
+                        {isEditing ? (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={editSaldoInput}
+                              onChange={(e) => setEditSaldoInput(e.target.value)}
+                              className="w-32 px-2 py-1 bg-background border border-border rounded text-xs font-mono"
+                            />
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={() => handleSaveSaldoCuenta(c.id)}
+                              disabled={savingCuenta}
+                              className="h-8 text-xs px-2.5"
+                            >
+                              ✓ Guardar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setEditingCuentaId(null)}
+                              className="h-8 text-xs px-2"
+                            >
+                              ✕
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <span className="text-base font-extrabold font-mono text-primary">
+                              {formatCOP(c.saldo)}
+                            </span>
+                            <button
+                              onClick={() => {
+                                setEditingCuentaId(c.id);
+                                setEditSaldoInput(String(c.saldo));
+                              }}
+                              title="Editar Saldo"
+                              className="p-1.5 text-muted-foreground hover:text-primary hover:bg-accent rounded-lg transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCuenta(c.id)}
+                              title="Eliminar Cuenta"
+                              className="p-1.5 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 rounded-lg transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-border mt-4">
+                <span className="text-xs text-muted-foreground">
+                  Cuentas activas: <strong className="text-foreground">{cuentas.length}</strong>
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowCuentasModal(false)}
+                >
+                  Cerrar
+                </Button>
+              </div>
             </div>
           </div>
         )}

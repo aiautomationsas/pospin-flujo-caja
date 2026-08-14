@@ -27,8 +27,10 @@ export interface CuentaBancaria {
   nombre: string;
   banco: string;
   numero: string;
+  tipo_cuenta?: string;
+  saldo: number;
   activa: boolean;
-  created_at: string;
+  created_at?: string;
 }
 
 export interface Cliente {
