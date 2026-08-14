@@ -19,6 +19,8 @@ import {
   Search,
   DollarSign,
   X,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 
 export default function FacturasPage() {
@@ -31,6 +33,7 @@ export default function FacturasPage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showRecaudoModal, setShowRecaudoModal] = useState(false);
+  const [showFechaModal, setShowFechaModal] = useState(false);
   const [selectedFactura, setSelectedFactura] = useState<FacturaConCliente | null>(null);
 
   const [newFactura, setNewFactura] = useState({
@@ -48,6 +51,7 @@ export default function FacturasPage() {
     semana_id: 1,
   });
 
+  const [nuevaFechaEst, setNuevaFechaEst] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,7 +60,6 @@ export default function FacturasPage() {
   }, []);
 
   async function fetchFacturas() {
-    // 1. Cargar instantáneamente desde la caché si existe (0 ms wait)
     const cachedFacturas = getCachedFacturas();
     const cachedClientes = getCachedClientes();
 
@@ -68,7 +71,6 @@ export default function FacturasPage() {
       setLoading(true);
     }
 
-    // 2. Revalidar en segundo plano silenciosamente
     try {
       const { data: clientesData } = await supabase.from('clientes').select('*');
       if (clientesData && clientesData.length > 0) {
@@ -180,6 +182,21 @@ export default function FacturasPage() {
     ];
   }
 
+  // Calcular Días de Mora / Aging de Cartera
+  function getAgingStatus(factura: FacturaConCliente) {
+    if (factura.estado === 'pagada') return { label: 'Pagada', color: 'text-muted-foreground bg-muted border-border' };
+
+    const hoy = new Date();
+    const venc = new Date(factura.fecha_vencimiento);
+    const diffTime = hoy.getTime() - venc.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays <= 0) return { label: 'Al día', color: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' };
+    if (diffDays <= 30) return { label: `${diffDays}d mora (1-30d)`, color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20' };
+    if (diffDays <= 60) return { label: `${diffDays}d mora (31-60d)`, color: 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20' };
+    return { label: `${diffDays}d mora (+60d)`, color: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 font-bold' };
+  }
+
   const facturasFiltradas = facturas.filter((f) => {
     if (activeTab !== 'todas' && f.estado !== activeTab) {
       return false;
@@ -263,7 +280,7 @@ export default function FacturasPage() {
 
       setFacturas(facturasActualizadas);
       setCachedFacturas(facturasActualizadas);
-      clearProyeccionesCache(); // Involucra cambios en proyecciones semanales
+      clearProyeccionesCache();
 
       setShowCreateModal(false);
       setNewFactura({
@@ -323,7 +340,7 @@ export default function FacturasPage() {
 
       setFacturas(facturasActualizadas);
       setCachedFacturas(facturasActualizadas);
-      clearProyeccionesCache(); // Involucra cambios en proyecciones semanales
+      clearProyeccionesCache();
 
       setShowRecaudoModal(false);
       setSelectedFactura(null);
@@ -334,6 +351,32 @@ export default function FacturasPage() {
       });
     } catch (err: unknown) {
       setFormError((err as Error).message || 'Error al registrar el recaudo');
+    }
+  }
+
+  // Modificar Fecha Estimada de Recaudo (Re-forecasting)
+  async function handleUpdateFechaEstimada(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedFactura || !nuevaFechaEst) return;
+
+    try {
+      await supabase
+        .from('facturas')
+        .update({ fecha_estimada_recaudo: nuevaFechaEst })
+        .eq('id', selectedFactura.id);
+
+      const facturasActualizadas = facturas.map((f) =>
+        f.id === selectedFactura.id ? { ...f, fecha_estimada_recaudo: nuevaFechaEst } : f
+      );
+
+      setFacturas(facturasActualizadas);
+      setCachedFacturas(facturasActualizadas);
+      clearProyeccionesCache(); // Invalida caché de proyecciones para re-calcular semanas
+
+      setShowFechaModal(false);
+      setSelectedFactura(null);
+    } catch (err: unknown) {
+      setFormError((err as Error).message || 'Error al actualizar fecha');
     }
   }
 
@@ -350,11 +393,11 @@ export default function FacturasPage() {
                 <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
               </span>
               <h1 className="text-2xl sm:text-3xl font-extrabold text-primary tracking-tight">
-                Gestión de Facturas y Cartera
+                Gestión de Facturas & Cartera
               </h1>
             </div>
             <p className="text-muted-foreground text-xs sm:text-sm">
-              Administre cuentas por cobrar, estados de cartera y registro de recaudos.
+              Administre cuentas por cobrar, análisis de morosidad (aging) y reprogramación de fechas de cobro.
             </p>
           </div>
 
@@ -462,7 +505,7 @@ export default function FacturasPage() {
           </div>
         </div>
 
-        {/* Tabla de Facturas */}
+        {/* Tabla de Facturas con Análisis de Morosidad (Aging) */}
         <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
           {loading ? (
             <div className="py-12 text-center text-muted-foreground">
@@ -477,14 +520,14 @@ export default function FacturasPage() {
             </div>
           ) : (
             <div className="overflow-x-auto -mx-3 sm:mx-0 px-3 sm:px-0">
-              <table className="w-full text-left border-collapse min-w-[700px]">
+              <table className="w-full text-left border-collapse min-w-[780px]">
                 <thead>
                   <tr className="border-b border-border text-[11px] font-semibold text-muted-foreground uppercase tracking-wider bg-muted/50">
                     <th className="py-3.5 px-4">Número</th>
                     <th className="py-3.5 px-4">Cliente</th>
-                    <th className="py-3.5 px-4">Emisión</th>
                     <th className="py-3.5 px-4">Vencimiento</th>
                     <th className="py-3.5 px-4">Est. Recaudo</th>
+                    <th className="py-3.5 px-4 text-center">Aging / Morosidad</th>
                     <th className="py-3.5 px-4 text-right">Valor Total</th>
                     <th className="py-3.5 px-4 text-right">Saldo Pendiente</th>
                     <th className="py-3.5 px-4 text-center">Estado</th>
@@ -492,73 +535,93 @@ export default function FacturasPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border text-xs sm:text-sm">
-                  {facturasFiltradas.map((f) => (
-                    <tr
-                      key={f.id}
-                      className="hover:bg-accent/50 text-foreground transition-colors"
-                    >
-                      <td className="py-3.5 px-4 font-bold font-mono text-primary whitespace-nowrap">
-                        {f.numero}
-                      </td>
-                      <td className="py-3.5 px-4 font-medium text-foreground whitespace-nowrap">
-                        {f.cliente?.nombre || 'Cliente sin nombre'}
-                      </td>
-                      <td className="py-3.5 px-4 text-[11px] text-muted-foreground whitespace-nowrap">
-                        {formatFechaEsp(f.fecha_emision)}
-                      </td>
-                      <td className="py-3.5 px-4 text-[11px] text-muted-foreground whitespace-nowrap">
-                        {formatFechaEsp(f.fecha_vencimiento)}
-                      </td>
-                      <td className="py-3.5 px-4 text-[11px] text-primary font-medium whitespace-nowrap">
-                        {formatFechaEsp(f.fecha_estimada_recaudo)}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono text-muted-foreground whitespace-nowrap">
-                        {formatCOP(f.valor)}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                        {formatCOP(f.saldo_pendiente || 0)}
-                      </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
-                            f.estado === 'pagada'
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                              : f.estado === 'parcial'
-                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
-                              : f.estado === 'vencida'
-                              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
-                              : 'bg-primary/10 text-primary border-primary/20'
-                          }`}
-                        >
-                          {f.estado.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        {f.estado !== 'pagada' ? (
-                          <Button
-                            size="sm"
-                            variant="secondary"
+                  {facturasFiltradas.map((f) => {
+                    const aging = getAgingStatus(f);
+
+                    return (
+                      <tr
+                        key={f.id}
+                        className="hover:bg-accent/50 text-foreground transition-colors"
+                      >
+                        <td className="py-3.5 px-4 font-bold font-mono text-primary whitespace-nowrap">
+                          {f.numero}
+                        </td>
+                        <td className="py-3.5 px-4 font-medium text-foreground whitespace-nowrap">
+                          {f.cliente?.nombre || 'Cliente sin nombre'}
+                        </td>
+                        <td className="py-3.5 px-4 text-[11px] text-muted-foreground whitespace-nowrap">
+                          {formatFechaEsp(f.fecha_vencimiento)}
+                        </td>
+                        <td className="py-3.5 px-4 text-[11px] whitespace-nowrap">
+                          <button
                             onClick={() => {
                               setSelectedFactura(f);
-                              setRecaudoInput({
-                                valor: String(f.saldo_pendiente || f.valor),
-                                fecha: new Date().toISOString().split('T')[0],
-                                semana_id: 1,
-                              });
-                              setShowRecaudoModal(true);
+                              setNuevaFechaEst(f.fecha_estimada_recaudo);
+                              setShowFechaModal(true);
                             }}
-                            className="text-xs font-semibold shadow-sm min-h-[34px]"
+                            className="inline-flex items-center gap-1 text-primary font-semibold hover:underline bg-primary/5 px-2 py-0.5 rounded border border-primary/20"
+                            title="Haz clic para reprogramar fecha estimada"
                           >
-                            💰 Abonar
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground font-mono">
-                            Pagada
+                            <Calendar className="w-3 h-3 text-secondary" />
+                            <span>{formatFechaEsp(f.fecha_estimada_recaudo)}</span>
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${aging.color}`}
+                          >
+                            <Clock className="w-2.5 h-2.5" />
+                            {aging.label}
                           </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono text-muted-foreground whitespace-nowrap">
+                          {formatCOP(f.valor)}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                          {formatCOP(f.saldo_pendiente || 0)}
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                              f.estado === 'pagada'
+                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                                : f.estado === 'parcial'
+                                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                                : f.estado === 'vencida'
+                                ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                                : 'bg-primary/10 text-primary border-primary/20'
+                            }`}
+                          >
+                            {f.estado.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          {f.estado !== 'pagada' ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setSelectedFactura(f);
+                                setRecaudoInput({
+                                  valor: String(f.saldo_pendiente || f.valor),
+                                  fecha: new Date().toISOString().split('T')[0],
+                                  semana_id: 1,
+                                });
+                                setShowRecaudoModal(true);
+                              }}
+                              className="text-xs font-semibold shadow-sm min-h-[34px]"
+                            >
+                              💰 Abonar
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground font-mono">
+                              Pagada
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -789,6 +852,73 @@ export default function FacturasPage() {
                   </Button>
                   <Button type="submit" variant="secondary" className="font-semibold shadow-md">
                     Confirmar Abono
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Reprogramar Fecha Estimada de Recaudo (Re-forecasting) */}
+        {showFechaModal && selectedFactura && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5 sm:p-6 shadow-2xl animate-scaleUp">
+              <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
+                <h3 className="text-lg sm:text-xl font-bold text-primary flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-secondary" /> Reprogramar Fecha de Recaudo
+                </h3>
+                <button
+                  onClick={() => setShowFechaModal(false)}
+                  className="text-muted-foreground hover:text-foreground text-xl font-bold p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="bg-muted p-3.5 rounded-xl border border-border mb-4 text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Factura:</span>
+                  <span className="font-bold text-primary font-mono">{selectedFactura.numero}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Cliente:</span>
+                  <span className="text-foreground font-medium">{selectedFactura.cliente?.nombre}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Monto Pendiente:</span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    {formatCOP(selectedFactura.saldo_pendiente || selectedFactura.valor)}
+                  </span>
+                </div>
+              </div>
+
+              <form onSubmit={handleUpdateFechaEstimada} className="space-y-4 text-xs sm:text-sm">
+                <div>
+                  <label className="block text-xs font-medium text-foreground mb-1">
+                    Nueva Fecha Estimada de Recaudo *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={nuevaFechaEst}
+                    onChange={(e) => setNuevaFechaEst(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <span className="text-[11px] text-muted-foreground mt-1 block">
+                    Al cambiar esta fecha, la proyección semanal ubicará automáticamente el ingreso de dinero en la semana correspondiente.
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowFechaModal(false)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" variant="default" className="font-semibold shadow-md">
+                    Guardar Nueva Fecha
                   </Button>
                 </div>
               </form>

@@ -19,7 +19,6 @@ import { Button } from '@/components/ui/button';
 import {
   TrendingUp,
   Receipt,
-  RefreshCw,
   AlertTriangle,
   Building2,
   TrendingDown,
@@ -32,6 +31,8 @@ import {
   Trash2,
   CreditCard,
   Wallet,
+  Download,
+  ShieldCheck,
 } from 'lucide-react';
 
 export default function FlujoCajaDashboardPage() {
@@ -223,6 +224,37 @@ export default function FlujoCajaDashboardPage() {
     return mock;
   }
 
+  // Exportar Reporte Ejecutivo CSV
+  function handleExportCSV() {
+    if (!proyecciones || proyecciones.length === 0) return;
+
+    let csvContent = 'data:text/csv;charset=utf-8,';
+    csvContent += 'Semana,Fecha Inicio,Fecha Fin,Saldo Inicial (COP),Recaudo Est (COP),Egresos (COP),Compromisos (COP),Saldo Final (COP),Estado\n';
+
+    proyecciones.forEach((p) => {
+      const row = [
+        `Semana ${p.semana}`,
+        p.fecha_inicio,
+        p.fecha_fin,
+        p.saldo_inicial,
+        p.recaudo,
+        p.egresos,
+        p.compromisos,
+        p.saldo_final,
+        p.deficit ? 'DEFICIT' : 'OK',
+      ].join(',');
+      csvContent += row + '\n';
+    });
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Informe_Flujo_Caja_Grupo_Pospin_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   // Recalcular proyección consolidada al modificar cuentas
   async function syncProyeccionConCuentas(cuentasActualizadas: CuentaBancaria[]) {
     const totalConsolidado = cuentasActualizadas.reduce((sum, c) => sum + (c.saldo || 0), 0);
@@ -249,7 +281,6 @@ export default function FlujoCajaDashboardPage() {
       // Ignorar
     }
 
-    // Fallback local
     const mock = generateMockProjections(totalConsolidado);
     setProyecciones(mock);
     setCachedProyecciones(mock);
@@ -388,9 +419,14 @@ export default function FlujoCajaDashboardPage() {
 
           <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
             <div>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-secondary text-secondary-foreground text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-full shadow-sm mb-3">
-                Grupo Pospin • Gestión Financiera
-              </span>
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-secondary text-secondary-foreground text-[10px] sm:text-xs font-bold uppercase tracking-wider rounded-full shadow-sm">
+                  Grupo Pospin • Tesorería Avanzada
+                </span>
+                <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium">
+                  <ShieldCheck className="w-3 h-3" /> Modelo Auditado
+                </span>
+              </div>
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight leading-tight">
                 Control & Proyección de Flujo de Caja
               </h1>
@@ -401,14 +437,12 @@ export default function FlujoCajaDashboardPage() {
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
               <Button
-                asChild
+                onClick={handleExportCSV}
                 variant="outline"
                 className="w-full sm:w-auto bg-primary-foreground/10 border-primary-foreground/20 text-primary-foreground hover:bg-primary-foreground/20 shadow-sm justify-center"
               >
-                <Link href="/flujo-caja/importar" className="inline-flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4 text-secondary shrink-0" />
-                  <span>Sincronizar SIIGO</span>
-                </Link>
+                <Download className="w-4 h-4 text-secondary shrink-0 mr-1.5" />
+                <span>Exportar Informe</span>
               </Button>
 
               <Button
@@ -484,9 +518,20 @@ export default function FlujoCajaDashboardPage() {
             <div className="text-xl sm:text-2xl font-extrabold text-foreground font-mono">
               {formatCOP(saldoActual)}
             </div>
-            <div className="flex items-center justify-between mt-1.5">
-              <span className="text-[10px] sm:text-xs text-muted-foreground block">
-                {cuentas.length} cuentas activas
+
+            {/* Mini Desglose de Cuentas Principales */}
+            <div className="mt-2 pt-2 border-t border-border/60 space-y-1">
+              {cuentas.slice(0, 2).map((c) => (
+                <div key={c.id} className="flex justify-between text-[11px]">
+                  <span className="text-muted-foreground truncate max-w-[120px]">{c.nombre}:</span>
+                  <span className="font-mono font-medium text-foreground">{formatCOP(c.saldo)}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between mt-2.5">
+              <span className="text-[10px] text-muted-foreground block">
+                {cuentas.length} cuentas configuradas
               </span>
               <button
                 onClick={() => {
@@ -579,9 +624,19 @@ export default function FlujoCajaDashboardPage() {
                 Detalle numérico de ingresos, egresos y saldos por período.
               </p>
             </div>
-            <span className="text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-lg border border-border font-mono font-medium self-start sm:self-auto">
-              {proyecciones.length} Semanas
-            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleExportCSV}
+                variant="outline"
+                size="sm"
+                className="text-xs font-semibold"
+              >
+                <Download className="w-3.5 h-3.5 mr-1" /> Exportar CSV
+              </Button>
+              <span className="text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-lg border border-border font-mono font-medium">
+                {proyecciones.length} Semanas
+              </span>
+            </div>
           </div>
 
           {loading ? (
