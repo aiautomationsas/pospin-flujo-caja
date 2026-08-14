@@ -1,23 +1,23 @@
-import { NextResponse } from 'next/server.js';
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { SiigoAPIClient, sincronizarCarteraSiigo } from '../../../../lib/siigo.ts';
+import { SiigoAPIClient, sincronizarCarteraSiigo } from '@/lib/siigo';
 
 export async function POST(request: Request) {
-  let body: any = {};
+  let body: Record<string, unknown> = {};
   try {
     const text = await request.text();
     if (text) {
       body = JSON.parse(text);
     }
-  } catch (e) {
+  } catch {
     // Body is optional or empty
   }
 
-  const username = body.username || process.env.SIIGO_USERNAME;
-  const accessKey = body.access_key || process.env.SIIGO_ACCESS_KEY;
-  const partnerId = body.partner_id || process.env.SIIGO_PARTNER_ID;
-  const baseUrl = body.base_url || process.env.SIIGO_BASE_URL;
-  const usuarioId = body.usuario_id || null;
+  const username = (body.username as string) || process.env.SIIGO_USERNAME;
+  const accessKey = (body.access_key as string) || process.env.SIIGO_ACCESS_KEY;
+  const partnerId = (body.partner_id as string) || process.env.SIIGO_PARTNER_ID;
+  const baseUrl = (body.base_url as string) || process.env.SIIGO_BASE_URL;
+  const usuarioId = (body.usuario_id as string) || null;
 
   if (!username || !accessKey || !partnerId) {
     return NextResponse.json(
@@ -77,8 +77,8 @@ export async function POST(request: Request) {
       },
       { status: 200 }
     );
-  } catch (error: any) {
-    const errorMessage = error.message || String(error);
+  } catch (error: unknown) {
+    const errorMessage = (error as Error).message || String(error);
     console.error('Error en Route Handler /api/siigo/sync:', errorMessage);
 
     // Intentar registrar log de error en Supabase

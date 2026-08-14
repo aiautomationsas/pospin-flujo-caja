@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import type { SiigoSyncLog, Importacion } from '@/types/flujo_caja';
+import type { SiigoSyncLog } from '@/types/flujo_caja';
 import { formatFechaEsp } from '@/lib/format';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -38,6 +38,7 @@ export default function ImportarPage() {
   // Cargar historial de logs desde Supabase al montar
   useEffect(() => {
     fetchLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchLogs() {
@@ -54,7 +55,7 @@ export default function ImportarPage() {
       } else {
         setSyncLogs(getMockSyncLogs());
       }
-    } catch (e) {
+    } catch {
       setSyncLogs(getMockSyncLogs());
     } finally {
       setLoadingLogs(false);
@@ -130,10 +131,10 @@ export default function ImportarPage() {
           error: resData.error || 'Fallo inesperado al conectar con SIIGO API',
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setSyncResult({
         success: false,
-        error: err.message || 'Error de red o conexión al servidor local',
+        error: (err as Error).message || 'Error de red o conexión al servidor local',
       });
     } finally {
       setIsSyncing(false);
@@ -155,8 +156,8 @@ export default function ImportarPage() {
         `✅ Archivo "${selectedFile.name}" procesado exitosamente. Se importaron 42 registros en las tablas de facturas y saldos.`
       );
       setSelectedFile(null);
-    } catch (e: any) {
-      setExcelResult(`❌ Error procesando el archivo Excel: ${e.message}`);
+    } catch (e: unknown) {
+      setExcelResult(`❌ Error procesando el archivo Excel: ${(e as Error).message}`);
     } finally {
       setIsUploading(false);
     }

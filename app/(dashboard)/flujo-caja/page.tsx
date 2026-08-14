@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { ProyeccionSemanal, ResumenDashboard } from '@/types/flujo_caja';
+import type { ProyeccionSemanal } from '@/types/flujo_caja';
 import ChartProyeccion from '@/components/flujo-caja/ChartProyeccion';
 import { formatCOP, formatFechaEsp } from '@/lib/format';
 import { supabase } from '@/lib/supabaseClient';

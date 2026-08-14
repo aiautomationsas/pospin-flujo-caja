@@ -53,7 +53,7 @@ def _render_lista(client) -> None:
 
     query = (
         client.table("facturas")
-        .select("id,numero,valor,estado,fecha_emision,fecha_vencimiento,cliente_id,clientes(nombre)")
+        .select("id,numero,valor,estado,fecha_emision,fecha_vencimiento,fecha_estimada_recaudo,cliente_id,clientes(nombre)")
         .order("fecha_vencimiento")
     )
     if filtro_estado:
@@ -67,10 +67,10 @@ def _render_lista(client) -> None:
         return
 
     # Encabezado
-    cols = st.columns([2, 1, 2, 2, 2, 2])
+    cols = st.columns([2, 1, 2, 2, 2, 2, 2])
     for col, header in zip(
         cols,
-        ["Cliente", "Nro.", "Emisión", "Vencimiento", "Valor", "Estado"],
+        ["Cliente", "Nro.", "Emisión", "Vencimiento", "Est. Recaudo", "Valor", "Estado"],
     ):
         col.markdown(f"**{header}**")
 
@@ -78,13 +78,14 @@ def _render_lista(client) -> None:
 
     for f in facturas:
         cliente_nombre = (f.get("clientes") or {}).get("nombre", "—")
-        cols = st.columns([2, 1, 2, 2, 2, 2])
+        cols = st.columns([2, 1, 2, 2, 2, 2, 2])
         cols[0].text(cliente_nombre)
         cols[1].text(f["numero"])
         cols[2].text(str(f["fecha_emision"]))
         cols[3].text(str(f["fecha_vencimiento"]))
-        cols[4].text(fmt_money(f["valor"]))
-        cols[5].markdown(_ESTADO_LABELS.get(f["estado"], f["estado"]))
+        cols[4].text(str(f.get("fecha_estimada_recaudo") or f["fecha_vencimiento"]))
+        cols[5].text(fmt_money(f["valor"]))
+        cols[6].markdown(_ESTADO_LABELS.get(f["estado"], f["estado"]))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +110,7 @@ def _render_nueva(client) -> None:
         with col2:
             fecha_emision = st.date_input("Fecha de emisión", value=date.today())
             fecha_vencimiento = st.date_input("Fecha de vencimiento", value=date.today())
+            fecha_estimada_recaudo = st.date_input("Fecha estimada de recaudo", value=date.today())
 
         valor = st.number_input(
             "Valor",
@@ -143,6 +145,7 @@ def _render_nueva(client) -> None:
                     "numero": numero.strip(),
                     "fecha_emision": fecha_emision.isoformat(),
                     "fecha_vencimiento": fecha_vencimiento.isoformat(),
+                    "fecha_estimada_recaudo": fecha_estimada_recaudo.isoformat(),
                     "valor": valor,
                     "estado": estado,
                 }
@@ -208,6 +211,10 @@ def _render_editar(client) -> None:
                 "Fecha de vencimiento",
                 value=date.fromisoformat(str(factura["fecha_vencimiento"])),
             )
+            fecha_estimada_recaudo = st.date_input(
+                "Fecha estimada de recaudo",
+                value=date.fromisoformat(str(factura.get("fecha_estimada_recaudo") or factura["fecha_vencimiento"])),
+            )
 
         valor = st.number_input(
             "Valor",
@@ -247,6 +254,7 @@ def _render_editar(client) -> None:
                     "numero": numero.strip(),
                     "fecha_emision": fecha_emision.isoformat(),
                     "fecha_vencimiento": fecha_vencimiento.isoformat(),
+                    "fecha_estimada_recaudo": fecha_estimada_recaudo.isoformat(),
                     "valor": valor,
                     "estado": estado,
                 }

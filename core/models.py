@@ -40,6 +40,7 @@ class Factura:
     numero: str = ""
     fecha_emision: Optional[date] = None
     fecha_vencimiento: Optional[date] = None
+    fecha_estimada_recaudo: Optional[date] = None
     valor: Decimal = Decimal("0")
     estado: str = "pendiente"
     created_at: Optional[datetime] = None
@@ -110,3 +111,25 @@ class Importacion:
     hojas: Optional[str] = None
     registros: int = 0
     exitosa: bool = True
+
+
+@dataclass
+class EgresoRecurrente:
+    id: Optional[int] = None
+    categoria_id: Optional[int] = None
+    tercero: str = ""
+    frecuencia: str = "mensual"
+    dia_pago: int = 1
+    monto_estimado: Decimal = Decimal("0")
+    activa: bool = True
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class SnapshotProyeccion:
+    id: Optional[int] = None
+    semana_id: Optional[int] = None
+    recaudo_estimado: Decimal = Decimal("0")
+    egresos_estimado: Decimal = Decimal("0")
+    saldo_final_estimado: Decimal = Decimal("0")
+    congelado_at: Optional[datetime] = None

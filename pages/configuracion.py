@@ -13,8 +13,8 @@ def render():
 
     client = get_client()
 
-    tab_cuentas, tab_clientes, tab_categorias, tab_usuarios = st.tabs([
-        "Cuentas Bancarias", "Clientes", "Categorías de Egreso", "Usuarios"
+    tab_cuentas, tab_clientes, tab_categorias, tab_recurrentes, tab_usuarios = st.tabs([
+        "Cuentas Bancarias", "Clientes", "Categorías de Egreso", "Egresos Recurrentes", "Usuarios"
     ])
 
     with tab_cuentas:
@@ -25,6 +25,9 @@ def render():
 
     with tab_categorias:
         _render_categorias(client)
+
+    with tab_recurrentes:
+        _render_recurrentes(client)
 
     with tab_usuarios:
         _render_usuarios()
@@ -197,6 +200,82 @@ def _render_usuarios():
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error: {e}")
+
+
+
+def _render_recurrentes(client):
+    """CRUD for egresos recurrentes."""
+    st.subheader("Egresos Recurrentes / Plantillas")
+    
+    # Categorías de egreso activas
+    categorias_resp = client.table("categorias_egreso").select("id, nombre").eq("activa", True).execute()
+    categorias_list = categorias_resp.data or []
+    cat_names = [c["nombre"] for c in categorias_list]
+    
+    if not cat_names:
+        st.warning("Debes registrar al menos una Categoría de Egreso activa antes de configurar egresos recurrentes.")
+        return
+
+    with st.form("form_recurrente", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            categoria_name = st.selectbox("Categoría", cat_names)
+            categoria_id = next(c["id"] for c in categorias_list if c["nombre"] == categoria_name)
+        with col2:
+            tercero = st.text_input("Tercero / Proveedor", placeholder="EPM, Nómina, etc.")
+        with col3:
+            frecuencia = st.selectbox("Frecuencia", ["semanal", "quincenal", "mensual", "semestral", "anual"])
+
+        col4, col5 = st.columns(2)
+        with col4:
+            dia_pago = st.number_input("Día de Pago", min_value=1, max_value=1231, value=15, 
+                                       help="Mensual: día del mes (1-31). Semanal: día (1-7, L-D). Anual/Semestral: Mes y día codificado (ej. 1215 para 15 de diciembre). Quincenal: Ignorado (vence 15 y 30).")
+        with col5:
+            monto = st.number_input("Monto Estimado (COP)", min_value=0.0, step=50000.0)
+
+        if st.form_submit_button("➕ Agregar Egreso Recurrente"):
+            if not tercero or monto <= 0:
+                st.warning("El tercero y el monto estimado son obligatorios.")
+            else:
+                try:
+                    client.table("egresos_recurrentes").insert({
+                        "categoria_id": categoria_id,
+                        "tercero": tercero,
+                        "frecuencia": frecuencia,
+                        "dia_pago": int(dia_pago),
+                        "monto_estimado": monto
+                    }).execute()
+                    st.success(f"Plantilla para '{tercero}' creada.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    # List
+    recurrentes_resp = client.table("egresos_recurrentes").select(
+        "*, categorias_egreso(nombre)"
+    ).order("tercero").execute()
+    
+    if recurrentes_resp.data:
+        for r in recurrentes_resp.data:
+            cat_info = r.get("categorias_egreso", {})
+            cat_name = cat_info.get("nombre", "N/A") if isinstance(cat_info, dict) else "N/A"
+            
+            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
+            with col1:
+                st.text(f"{r['tercero']} ({cat_name})")
+            with col2:
+                st.text(r["frecuencia"].capitalize())
+            with col3:
+                st.text(f"Día: {r['dia_pago']}")
+            with col4:
+                from utils.format import fmt_money
+                st.text(fmt_money(float(r["monto_estimado"])))
+            with col5:
+                new_state = not r["activa"]
+                label = "✅" if r["activa"] else "❌"
+                if st.button(label, key=f"toggle_recurrente_{r['id']}"):
+                    client.table("egresos_recurrentes").update({"activa": new_state}).eq("id", r["id"]).execute()
+                    st.rerun()
 
 
 # Support direct execution via Streamlit multi-page auto-discovery

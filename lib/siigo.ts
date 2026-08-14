@@ -1,14 +1,10 @@
-/**
- * Cliente de integración nativa con la API oficial de SIIGO Colombia para Next.js / Node.js
- * Portado desde core/siigo_api.py
- */
-
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   SiigoCredentials,
   SiigoAuthResponse,
   SiigoInvoice,
   SiigoSyncStats,
-} from '../types/flujo_caja.ts';
+} from '../types/flujo_caja';
 
 export class SiigoAPIClient {
   private baseUrl: string;
@@ -76,9 +72,10 @@ export class SiigoAPIClient {
       this.tokenExpiresAt = Date.now() + expiresInMs;
 
       return this.token;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error de autenticación con SIIGO:', error);
-      throw new Error(`No se pudo conectar a SIIGO: ${error.message || error}`);
+      const msg = (error as Error).message || String(error);
+      throw new Error(`No se pudo conectar a SIIGO: ${msg}`);
     }
   }
 
@@ -153,7 +150,7 @@ export class SiigoAPIClient {
       }
 
       return facturas;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error al consultar facturas en SIIGO:', error);
       throw error;
     }
@@ -162,10 +159,10 @@ export class SiigoAPIClient {
   /**
    * Consulta el reporte de cuentas por pagar en SIIGO.
    */
-  public async consultarCuentasPorPagar(): Promise<any[]> {
+  public async consultarCuentasPorPagar(): Promise<Record<string, unknown>[]> {
     const url = `${this.baseUrl}/v1/accounts-payable`;
     const headers = await this.getHeaders();
-    const cuentasPagar: any[] = [];
+    const cuentasPagar: Record<string, unknown>[] = [];
     let page = 1;
     const pageSize = 100;
 
@@ -189,7 +186,7 @@ export class SiigoAPIClient {
         }
 
         const data = await response.json();
-        const results: any[] = data.results || [];
+        const results: Record<string, unknown>[] = data.results || [];
 
         if (results.length === 0) {
           break;
@@ -206,7 +203,7 @@ export class SiigoAPIClient {
       }
 
       return cuentasPagar;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error al consultar cuentas por pagar en SIIGO:', error);
       throw error;
     }
@@ -217,9 +214,10 @@ export class SiigoAPIClient {
  * Sincroniza facturas y clientes desde SIIGO a Supabase preservando fechas de recaudo estimadas.
  */
 export async function sincronizarCarteraSiigo(
-  supabaseClient: any,
+  supabaseClient: unknown,
   siigoClient: SiigoAPIClient
 ): Promise<SiigoSyncStats> {
+  const supabase = supabaseClient as SupabaseClient;
   const stats: SiigoSyncStats = {
     clientes_creados: 0,
     facturas_creadas: 0,
@@ -252,7 +250,7 @@ export async function sincronizarCarteraSiigo(
 
       // 1. Sincronizar Cliente en Supabase
       let clienteId: number | null = null;
-      const { data: clienteExistente, error: errCliente } = await supabaseClient
+      const { data: clienteExistente, error: errCliente } = await supabase
         .from('clientes')
         .select('id')
         .eq('nombre', customerName)
@@ -266,7 +264,7 @@ export async function sincronizarCarteraSiigo(
         clienteId = clienteExistente[0].id;
       } else {
         const { data: nuevoCliente, error: errInsertCliente } =
-          await supabaseClient
+          await supabase
             .from('clientes')
             .insert({
               nombre: customerName,
@@ -310,7 +308,7 @@ export async function sincronizarCarteraSiigo(
       }
 
       // 3. Upsert factura preservando fecha_estimada_recaudo
-      const { data: facturaExistente, error: errFactura } = await supabaseClient
+      const { data: facturaExistente, error: errFactura } = await supabase
         .from('facturas')
         .select('id, fecha_estimada_recaudo')
         .eq('numero', numeroCompleto)
@@ -322,7 +320,7 @@ export async function sincronizarCarteraSiigo(
 
       if (facturaExistente && facturaExistente.length > 0) {
         const factId = facturaExistente[0].id;
-        const { error: errUpdate } = await supabaseClient
+        const { error: errUpdate } = await supabase
           .from('facturas')
           .update({
             valor,
@@ -338,7 +336,7 @@ export async function sincronizarCarteraSiigo(
 
         stats.facturas_actualizadas++;
       } else {
-        const { error: errInsertFactura } = await supabaseClient
+        const { error: errInsertFactura } = await supabase
           .from('facturas')
           .insert({
             cliente_id: clienteId,
@@ -360,9 +358,9 @@ export async function sincronizarCarteraSiigo(
     }
 
     return stats;
-  } catch (error: any) {
+  } catch (error: unknown) {
     stats.exitosa = false;
-    stats.error = error.message || String(error);
+    stats.error = (error as Error).message || String(error);
     throw error;
   }
 }

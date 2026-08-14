@@ -204,10 +204,15 @@ def _render_recaudos(client, semana_id, semana):
         )
         selected_factura = factura_options[selected_factura_label]
 
+        # Calcular saldo pendiente
+        recaudos_f = client.table("recaudos").select("valor").eq("factura_id", selected_factura["id"]).execute()
+        total_recaudado = sum(float(r["valor"]) for r in recaudos_f.data) if recaudos_f.data else 0.0
+        pendiente_recaudo = max(float(selected_factura["valor"]) - total_recaudado, 0.0)
+
         valor_recaudo = st.number_input(
             "Valor recaudado",
             min_value=0.0,
-            value=0.0,
+            value=float(pendiente_recaudo),
             step=1000000.0,
             format="%.0f",
             key="recaudo_valor",
@@ -240,12 +245,18 @@ def _render_recaudos(client, semana_id, semana):
 
 def _render_egresos(client, semana_id, semana):
     """Tab: Egresos."""
+    from core.proyeccion import MotorProyeccion
+    
     categorias_resp = client.table("categorias_egreso").select("*").eq("activa", True).order("nombre").execute()
     if not categorias_resp.data:
         st.info("No hay categorías de egreso activas. Configúralas en ⚙️ Configuración.")
         return
 
     st.markdown(f"**Semana {semana['numero']}** — Ingresa los egresos por categoría.")
+
+    motor = MotorProyeccion(client)
+    fecha_inicio = date.fromisoformat(semana["fecha_inicio"])
+    fecha_fin = date.fromisoformat(semana["fecha_fin"])
 
     with st.form("form_egresos"):
         egresos = {}
@@ -254,8 +265,23 @@ def _render_egresos(client, semana_id, semana):
             existing = client.table("egresos").select("valor,descripcion").eq(
                 "semana_id", semana_id
             ).eq("categoria_id", cat["id"]).execute()
-            default_val = float(existing.data[0]["valor"]) if existing.data else 0.0
-            default_desc = existing.data[0].get("descripcion", "") if existing.data else ""
+            
+            if existing.data:
+                default_val = float(existing.data[0]["valor"])
+                default_desc = existing.data[0].get("descripcion", "") or ""
+            else:
+                # Pre-cargar desde egresos recurrentes estimados
+                recurrentes_resp = client.table("egresos_recurrentes").select("*").eq(
+                    "categoria_id", cat["id"]
+                ).eq("activa", True).execute()
+                recurrentes = recurrentes_resp.data or []
+                
+                default_val = 0.0
+                default_desc = ""
+                for rec in recurrentes:
+                    if motor._evaluar_recurrencia(rec, fecha_inicio, fecha_fin):
+                        default_val += float(rec["monto_estimado"])
+                        default_desc = f"[Estimado: {rec['tercero']}]"
 
             col1, col2 = st.columns([2, 1])
             with col1:

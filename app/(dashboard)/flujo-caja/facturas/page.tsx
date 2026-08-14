@@ -41,6 +41,7 @@ export default function FacturasPage() {
   // Cargar facturas y clientes desde Supabase (con fallback a mock si DB está vacía)
   useEffect(() => {
     fetchFacturas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchFacturas() {
@@ -66,21 +67,22 @@ export default function FacturasPage() {
         setFacturas(getMockFacturas());
       } else {
         // Calcular total recaudado y saldo pendiente para cada factura
-        const facturasProcesadas: FacturaConCliente[] = facturasData.map((f: any) => {
-          const totalRecaudado = (f.recaudos || []).reduce(
-            (sum: number, r: any) => sum + Number(r.valor),
+        const facturasProcesadas: FacturaConCliente[] = facturasData.map((f: Record<string, unknown>) => {
+          const recaudos = (f.recaudos as Record<string, unknown>[]) || [];
+          const totalRecaudado = recaudos.reduce(
+            (sum: number, r: Record<string, unknown>) => sum + Number(r.valor),
             0
           );
           const saldoPendiente = Math.max(0, Number(f.valor) - totalRecaudado);
           return {
-            ...f,
+            ...(f as unknown as FacturaConCliente),
             total_recaudado: totalRecaudado,
             saldo_pendiente: saldoPendiente,
           };
         });
         setFacturas(facturasProcesadas);
       }
-    } catch (e) {
+    } catch {
       setFacturas(getMockFacturas());
     } finally {
       setLoading(false);
@@ -245,8 +247,8 @@ export default function FacturasPage() {
         fecha_estimada_recaudo: '',
         valor: '',
       });
-    } catch (err: any) {
-      setFormError(err.message || 'Error al guardar la factura');
+    } catch (err: unknown) {
+      setFormError((err as Error).message || 'Error al guardar la factura');
     }
   }
 
@@ -305,8 +307,8 @@ export default function FacturasPage() {
         fecha: new Date().toISOString().split('T')[0],
         semana_id: 1,
       });
-    } catch (err: any) {
-      setFormError(err.message || 'Error al registrar el recaudo');
+    } catch (err: unknown) {
+      setFormError((err as Error).message || 'Error al registrar el recaudo');
     }
   }
 

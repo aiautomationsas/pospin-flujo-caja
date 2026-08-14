@@ -1,28 +1,26 @@
-/**
- * Motor de proyección de flujo de caja semanal para Next.js / Node.js
- * Portado desde core/proyeccion.py
- */
-
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
+  EgresoRecurrente,
+  Semana,
   ProyeccionSemanal,
   CalibracionProyeccion,
   SaldoPorCuenta,
   RecaudoPendienteCliente,
-  EgresoRecurrente,
-  Semana,
-} from '../types/flujo_caja.ts';
+} from '../types/flujo_caja';
 
 /**
- * Obtiene el número de semana ISO y el año para una fecha dada.
+ * Calcula la semana ISO de una fecha dada.
  */
-export function getISOWeekAndYear(d: Date): { week: number; year: number } {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil(
-    ((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7
-  );
+export function getISOWeekAndYear(date: Date): { week: number; year: number } {
+  const target = new Date(date.valueOf());
+  const dayNumber = (date.getDay() + 6) % 7;
+  target.setDate(target.getDate() - dayNumber + 3);
+  const firstThursday = target.valueOf();
+  target.setMonth(0, 1);
+  if (target.getDay() !== 4) {
+    target.setMonth(0, 1 + ((4 - target.getDay() + 7) % 7));
+  }
+  const weekNo = 1 + Math.round((firstThursday - target.valueOf()) / 604800000);
   return { week: weekNo, year: date.getUTCFullYear() };
 }
 
@@ -30,9 +28,10 @@ export function getISOWeekAndYear(d: Date): { week: number; year: number } {
  * Genera semanas futuras en la base de datos si no existen, empezando desde la semana ISO actual.
  */
 export async function generarSemanasFuturas(
-  supabaseClient: any,
+  supabaseClient: unknown,
   n: number = 12
 ): Promise<void> {
+  const supabase = supabaseClient as SupabaseClient;
   const today = new Date();
   const dayOfWeek = today.getDay(); // 0 is Sunday, 1 is Monday...
   const diffToMonday = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
@@ -50,7 +49,7 @@ export async function generarSemanasFuturas(
     const fechaInicioStr = fechaInicio.toISOString().split('T')[0];
     const fechaFinStr = fechaFin.toISOString().split('T')[0];
 
-    const { data: existing } = await supabaseClient
+    const { data: existing } = await supabase
       .from('semanas')
       .select('id')
       .eq('anio', year)
@@ -58,7 +57,7 @@ export async function generarSemanasFuturas(
       .limit(1);
 
     if (!existing || existing.length === 0) {
-      await supabaseClient.from('semanas').insert({
+      await supabase.from('semanas').insert({
         numero: week,
         anio: year,
         fecha_inicio: fechaInicioStr,
@@ -162,13 +161,14 @@ export function evaluarRecurrencia(
  * Calcula la proyección de flujo de caja semana a semana para las próximas N semanas.
  */
 export async function calcularProyeccionFlujoCaja(
-  supabaseClient: any,
+  supabaseClient: unknown,
   semanas: number = 12
 ): Promise<ProyeccionSemanal[]> {
+  const supabase = supabaseClient as SupabaseClient;
   const hoyStr = new Date().toISOString().split('T')[0];
 
   // Obtener semanas futuras ordenadas por fecha de inicio
-  const { data: semanasData, error: errSemanas } = await supabaseClient
+  const { data: semanasData, error: errSemanas } = await supabase
     .from('semanas')
     .select('*')
     .gte('fecha_inicio', hoyStr)
@@ -185,7 +185,7 @@ export async function calcularProyeccionFlujoCaja(
   }
 
   // 1. Obtener facturas pendientes o parciales
-  const { data: facturasData, error: errFacturas } = await supabaseClient
+  const { data: facturasData, error: errFacturas } = await supabase
     .from('facturas')
     .select('id, valor, fecha_estimada_recaudo, estado')
     .in('estado', ['pendiente', 'parcial']);
@@ -202,14 +202,14 @@ export async function calcularProyeccionFlujoCaja(
 
   if (facturasData) {
     for (const f of facturasData) {
-      const { data: recaudosData } = await supabaseClient
+      const { data: recaudosData } = await supabase
         .from('recaudos')
         .select('valor')
         .eq('factura_id', f.id);
 
       const totalRecaudado = recaudosData
         ? recaudosData.reduce(
-            (acc: number, r: any) => acc + Number(r.valor),
+            (acc: number, r: Record<string, unknown>) => acc + Number(r.valor),
             0
           )
         : 0;
@@ -225,7 +225,7 @@ export async function calcularProyeccionFlujoCaja(
   }
 
   // 2. Obtener egresos recurrentes activos
-  const { data: recurrentesData, error: errRecurrentes } = await supabaseClient
+  const { data: recurrentesData, error: errRecurrentes } = await supabase
     .from('egresos_recurrentes')
     .select('*')
     .eq('activa', true);
@@ -249,13 +249,13 @@ export async function calcularProyeccionFlujoCaja(
     // Saldo inicial de la semana
     let saldoInicial = 0;
     if (saldoAcumulado === null) {
-      const { data: saldosData } = await supabaseClient
+      const { data: saldosData } = await supabase
         .from('saldos_semanales')
         .select('saldo')
         .eq('semana_id', semanaId);
 
       saldoInicial = saldosData
-        ? saldosData.reduce((acc: number, s: any) => acc + Number(s.saldo), 0)
+        ? saldosData.reduce((acc: number, s: Record<string, unknown>) => acc + Number(s.saldo), 0)
         : 0;
     } else {
       saldoInicial = saldoAcumulado;
@@ -263,13 +263,13 @@ export async function calcularProyeccionFlujoCaja(
 
     // ── RECAUDOS DE LA SEMANA ──
     // A. Recaudos reales
-    const { data: recaudosData } = await supabaseClient
+    const { data: recaudosData } = await supabase
       .from('recaudos')
       .select('valor')
       .eq('semana_id', semanaId);
 
     const recaudosReales = recaudosData
-      ? recaudosData.reduce((acc: number, r: any) => acc + Number(r.valor), 0)
+      ? recaudosData.reduce((acc: number, r: Record<string, unknown>) => acc + Number(r.valor), 0)
       : 0;
 
     // B. Recaudos proyectados de facturas pendientes
@@ -293,7 +293,7 @@ export async function calcularProyeccionFlujoCaja(
 
     // ── EGRESOS DE LA SEMANA ──
     // A. Egresos reales
-    const { data: egresosData } = await supabaseClient
+    const { data: egresosData } = await supabase
       .from('egresos')
       .select('valor, categoria_id')
       .eq('semana_id', semanaId);
@@ -324,7 +324,7 @@ export async function calcularProyeccionFlujoCaja(
     }
 
     // C. Compromisos pendientes
-    const { data: compromisosData } = await supabaseClient
+    const { data: compromisosData } = await supabase
       .from('compromisos')
       .select('valor')
       .eq('estado', 'pendiente')
@@ -333,7 +333,7 @@ export async function calcularProyeccionFlujoCaja(
 
     const totalCompromisos = compromisosData
       ? compromisosData.reduce(
-          (acc: number, c: any) => acc + Number(c.valor),
+          (acc: number, c: Record<string, unknown>) => acc + Number(c.valor),
           0
         )
       : 0;
@@ -372,15 +372,16 @@ export async function calcularProyeccionFlujoCaja(
  * Guarda/congela la estimación proyectada para una semana en snapshots_proyeccion.
  */
 export async function guardarSnapshotProyeccion(
-  supabaseClient: any,
+  supabaseClient: unknown,
   semanaId: number,
   recaudoEst: number,
   egresosEst: number,
   saldoEst: number
 ): Promise<void> {
+  const supabase = supabaseClient as SupabaseClient;
   const congeladoAt = new Date().toISOString().split('T')[0];
 
-  const { error } = await supabaseClient
+  const { error } = await supabase
     .from('snapshots_proyeccion')
     .upsert({
       semana_id: semanaId,
@@ -400,10 +401,11 @@ export async function guardarSnapshotProyeccion(
  * Compara las estimaciones congeladas históricas contra los resultados reales.
  */
 export async function obtenerCalibracionProyeccion(
-  supabaseClient: any,
+  supabaseClient: unknown,
   limiteSemanas: number = 4
 ): Promise<CalibracionProyeccion[]> {
-  const { data: snapshotsData, error } = await supabaseClient
+  const supabase = supabaseClient as SupabaseClient;
+  const { data: snapshotsData, error } = await supabase
     .from('snapshots_proyeccion')
     .select('*, semanas(*)')
     .order('congelado_at', { ascending: false })
@@ -425,33 +427,33 @@ export async function obtenerCalibracionProyeccion(
     const semanaId = snap.semana_id;
 
     // Recaudos reales
-    const { data: recaudosData } = await supabaseClient
+    const { data: recaudosData } = await supabase
       .from('recaudos')
       .select('valor')
       .eq('semana_id', semanaId);
 
     const realRecaudo = recaudosData
-      ? recaudosData.reduce((acc: number, r: any) => acc + Number(r.valor), 0)
+      ? recaudosData.reduce((acc: number, r: Record<string, unknown>) => acc + Number(r.valor), 0)
       : 0;
 
     // Egresos reales
-    const { data: egresosData } = await supabaseClient
+    const { data: egresosData } = await supabase
       .from('egresos')
       .select('valor')
       .eq('semana_id', semanaId);
 
     const realEgresos = egresosData
-      ? egresosData.reduce((acc: number, e: any) => acc + Number(e.valor), 0)
+      ? egresosData.reduce((acc: number, e: Record<string, unknown>) => acc + Number(e.valor), 0)
       : 0;
 
     // Saldo inicial real de esa semana
-    const { data: saldosData } = await supabaseClient
+    const { data: saldosData } = await supabase
       .from('saldos_semanales')
       .select('saldo')
       .eq('semana_id', semanaId);
 
     const saldoInicialReal = saldosData
-      ? saldosData.reduce((acc: number, s: any) => acc + Number(s.saldo), 0)
+      ? saldosData.reduce((acc: number, s: Record<string, unknown>) => acc + Number(s.saldo), 0)
       : 0;
 
     const realSaldoFinal = saldoInicialReal + realRecaudo - realEgresos;
@@ -483,10 +485,11 @@ export async function obtenerCalibracionProyeccion(
  * Retorna saldo por cuenta bancaria para una semana dada.
  */
 export async function obtenerSaldoPorCuenta(
-  supabaseClient: any,
+  supabaseClient: unknown,
   semanaId: number
 ): Promise<SaldoPorCuenta[]> {
-  const { data, error } = await supabaseClient
+  const supabase = supabaseClient as SupabaseClient;
+  const { data, error } = await supabase
     .from('saldos_semanales')
     .select('saldo, cuenta_id, cuentas_bancarias(nombre, banco, numero)')
     .eq('semana_id', semanaId);
@@ -500,14 +503,14 @@ export async function obtenerSaldoPorCuenta(
     return [];
   }
 
-  return data.map((r: any) => {
-    const cuenta = r.cuentas_bancarias || {};
+  return data.map((r: Record<string, unknown>) => {
+    const cuenta = (r.cuentas_bancarias as Record<string, string>) || {};
     return {
-      cuenta_id: r.cuenta_id,
+      cuenta_id: Number(r.cuenta_id || 0),
       nombre: cuenta.nombre || 'N/A',
       banco: cuenta.banco || 'N/A',
       numero: cuenta.numero || 'N/A',
-      saldo: Number(r.saldo),
+      saldo: Number(r.saldo || 0),
     };
   });
 }
@@ -516,9 +519,10 @@ export async function obtenerSaldoPorCuenta(
  * Retorna recaudo pendiente agrupado por cliente.
  */
 export async function obtenerRecaudoPendienteCliente(
-  supabaseClient: any
+  supabaseClient: unknown
 ): Promise<RecaudoPendienteCliente[]> {
-  const { data: facturasData, error } = await supabaseClient
+  const supabase = supabaseClient as SupabaseClient;
+  const { data: facturasData, error } = await supabase
     .from('facturas')
     .select('id, numero, valor, estado, clientes(nombre), recaudos(valor)')
     .in('estado', ['pendiente', 'parcial']);
@@ -535,7 +539,8 @@ export async function obtenerRecaudoPendienteCliente(
   const clientesMap = new Map<string, RecaudoPendienteCliente>();
 
   for (const f of facturasData) {
-    const clienteNombre = f.clientes?.nombre || 'Desconocido';
+    const clientesObj = Array.isArray(f.clientes) ? f.clientes[0] : f.clientes;
+    const clienteNombre = (clientesObj as { nombre?: string })?.nombre || 'Desconocido';
 
     if (!clientesMap.has(clienteNombre)) {
       clientesMap.set(clienteNombre, {
@@ -548,7 +553,7 @@ export async function obtenerRecaudoPendienteCliente(
     const valor = Number(f.valor);
     const recaudosList = f.recaudos || [];
     const totalRecaudado = Array.isArray(recaudosList)
-      ? recaudosList.reduce((acc: number, r: any) => acc + Number(r.valor), 0)
+      ? recaudosList.reduce((acc: number, r: Record<string, unknown>) => acc + Number(r.valor), 0)
       : 0;
 
     const pendiente = Math.max(valor - totalRecaudado, 0);
@@ -569,7 +574,7 @@ export async function obtenerRecaudoPendienteCliente(
  * Retorna semanas donde el saldo proyectado es negativo (déficit).
  */
 export async function obtenerAlertasDeficit(
-  supabaseClient: any
+  supabaseClient: unknown
 ): Promise<ProyeccionSemanal[]> {
   const proyeccion = await calcularProyeccionFlujoCaja(supabaseClient, 12);
   return proyeccion.filter((p) => p.deficit);

@@ -1,5 +1,5 @@
-import { NextResponse, type NextRequest } from 'next/server.js';
-import { supabase } from './lib/supabaseClient.ts';
+import { NextResponse, type NextRequest } from 'next/server';
+import { supabase } from '@/lib/supabaseClient';
 
 /**
  * Extracts a candidate JWT token from either the Authorization Bearer header

@@ -57,7 +57,7 @@ export function formatFechaEsp(fechaStr: string | null | undefined): string {
       month: 'short',
       year: 'numeric',
     });
-  } catch (e) {
+  } catch {
     return fechaStr;
   }
 }
