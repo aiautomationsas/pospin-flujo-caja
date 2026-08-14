@@ -133,3 +133,33 @@ class SnapshotProyeccion:
     egresos_estimado: Decimal = Decimal("0")
     saldo_final_estimado: Decimal = Decimal("0")
     congelado_at: Optional[datetime] = None
+
+
+@dataclass
+class Obligacion:
+    id: Optional[int] = None
+    tercero: str = ""
+    categoria_id: Optional[int] = None
+    concepto: str = ""
+    monto_total: Decimal = Decimal("0")
+    saldo_pendiente: Decimal = Decimal("0")
+    fecha_vencimiento: Optional[date] = None
+    fecha_programada_pago: Optional[date] = None
+    frecuencia: str = "unica"
+    prioridad: str = "media"
+    estado: str = "pendiente"
+    cuenta_origen_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class PagoObligacion:
+    id: Optional[int] = None
+    obligacion_id: int = 0
+    cuenta_id: int = 0
+    semana_id: Optional[int] = None
+    monto_pagado: Decimal = Decimal("0")
+    fecha_pago: Optional[date] = None
+    comprobante_ref: Optional[str] = None
+    created_at: Optional[datetime] = None
+

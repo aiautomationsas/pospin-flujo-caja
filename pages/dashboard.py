@@ -46,6 +46,29 @@ def render():
     tab_proyeccion, tab_calibracion = st.tabs(["📊 Proyección Semanal", "⚖️ Calibración (Estimado vs. Real)"])
 
     with tab_proyeccion:
+        # ── KPI Cards ──
+        if proyeccion:
+            saldo_inicial_total = proyeccion[0]["saldo_inicial"]
+            recaudo_12sem = sum(p.get("recaudo", 0.0) for p in proyeccion)
+            obligaciones_12sem = sum(p.get("obligaciones", 0.0) for p in proyeccion)
+            saldo_minimo_proyectado = min(p.get("saldo_final", 0.0) for p in proyeccion)
+
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            with kpi1:
+                st.metric("Saldo Inicial Total", fmt_money(saldo_inicial_total))
+            with kpi2:
+                st.metric("Recaudo Proyectado (12 sem)", fmt_money(recaudo_12sem))
+            with kpi3:
+                st.metric("Obligaciones (CxP 12 sem)", fmt_money(obligaciones_12sem))
+            with kpi4:
+                st.metric(
+                    "Saldo Mínimo Proyectado",
+                    fmt_money(saldo_minimo_proyectado),
+                    delta="⚠️ Déficit" if saldo_minimo_proyectado < 0 else "🟢 Positivo",
+                    delta_color="inverse" if saldo_minimo_proyectado < 0 else "normal",
+                )
+            st.markdown("---")
+
         # ── Congelar semana ──
         if proyeccion:
             col_sem, col_btn = st.columns([3, 1])
@@ -66,37 +89,57 @@ def render():
                     except Exception as e:
                         st.error(f"Error al congelar estimación: {e}")
 
-        # ── Plotly line chart ──
-        st.subheader("📈 Proyección de Saldo (12 semanas)")
+        # ── Plotly visual chart (Inflow vs Outflow + Saldo Final) ──
+        st.subheader("📈 Proyección de Saldo e Ingresos vs Egresos (12 semanas)")
 
         labels = [semana_label(p["semana"], p["anio"]) for p in proyeccion]
+        recaudos_list = [p.get("recaudo", 0.0) for p in proyeccion]
+        egresos_rec_list = [p.get("egresos_recurrente", 0.0) + p.get("egresos_real", 0.0) for p in proyeccion]
+        obligaciones_list = [p.get("obligaciones", 0.0) for p in proyeccion]
         saldos = [p["saldo_final"] for p in proyeccion]
 
-        min_saldo = min(saldos)
-        max_saldo = max(saldos)
-        padding = max(abs(max_saldo), abs(min_saldo)) * 0.15 or 5_000_000
-        y_min = min(min_saldo - padding, -padding)
-        y_max = max_saldo + padding
-
-        colors = ["#d62728" if s < 0 else "#1f77b4" for s in saldos]
+        colors_saldo = ["#d62728" if s < 0 else "#1f77b4" for s in saldos]
 
         fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=recaudos_list,
+            name="Recaudos Proyectados",
+            marker_color="#2ca02c"
+        ))
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=egresos_rec_list,
+            name="Egresos Recurrentes",
+            marker_color="#ff7f0e"
+        ))
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=obligaciones_list,
+            name="Obligaciones (CxP)",
+            marker_color="#d62728"
+        ))
         fig.add_trace(go.Scatter(
             x=labels,
             y=saldos,
             mode="lines+markers",
-            name="Saldo Proyectado",
+            name="Saldo Final Proyectado",
             line=dict(color="#1f77b4", width=3),
-            marker=dict(size=10, color=colors),
+            marker=dict(size=9, color=colors_saldo),
         ))
+
         fig.add_hline(y=0, line_dash="dash", line_color="gray")
+
         fig.update_layout(
+            barmode="group",
             xaxis_title="Semana",
-            yaxis_title="Saldo (COP)",
-            yaxis=dict(range=[y_min, y_max], tickformat=",.0f"),
-            height=400,
+            yaxis_title="Monto (COP)",
+            yaxis=dict(tickformat=",.0f"),
+            height=450,
             margin=dict(l=20, r=20, t=30, b=20),
             hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -105,12 +148,18 @@ def render():
 
         table_rows = []
         for p in proyeccion:
+            egres_rec = p.get("egresos_recurrente", 0.0) + p.get("egresos_real", 0.0)
+            oblig = p.get("obligaciones", 0.0)
+            saldo_fin = p["saldo_final"]
+            estado_liq = "🔴 Déficit" if saldo_fin < 0 else "🟢 Superávit"
             table_rows.append({
                 "Semana": semana_label(p["semana"], p["anio"]),
                 "Saldo Inicial": fmt_money(p["saldo_inicial"]),
-                "Recaudo Proyectado": fmt_money(p["recaudo"]),
-                "Egresos Proyectados": fmt_money(p["egresos"]),
-                "Saldo Final Proyectado": fmt_money(p["saldo_final"]),
+                "Recaudos Proyectados": fmt_money(p["recaudo"]),
+                "Egresos Recurrentes": fmt_money(egres_rec),
+                "Obligaciones (CxP)": fmt_money(oblig),
+                "Saldo Final Proyectado": fmt_money(saldo_fin),
+                "Estado Liquidez": estado_liq,
             })
 
         st.dataframe(table_rows, use_container_width=True, hide_index=True)
@@ -152,9 +201,10 @@ def render():
         current_semana_id = proyeccion[0]["semana_id"] if proyeccion else None
         saldos_export = motor.saldo_por_cuenta(current_semana_id) if current_semana_id else []
         recaudos_export = motor.recaudo_pendiente()
+        obligaciones_export = motor.obligaciones_pendientes()
 
         with exp_col1:
-            excel_data = export_excel(proyeccion, saldos_export, recaudos_export)
+            excel_data = export_excel(proyeccion, saldos_export, recaudos_export, obligaciones_export)
             st.download_button(
                 "📊 Exportar Excel",
                 data=excel_data,
@@ -163,7 +213,7 @@ def render():
                 use_container_width=True,
             )
         with exp_col2:
-            pdf_data = export_pdf(proyeccion, saldos_export, recaudos_export)
+            pdf_data = export_pdf(proyeccion, saldos_export, recaudos_export, obligaciones_export)
             st.download_button(
                 "📄 Exportar PDF",
                 data=pdf_data,
@@ -171,6 +221,7 @@ def render():
                 mime="application/pdf",
                 use_container_width=True,
             )
+
 
     with tab_calibracion:
         st.subheader("⚖️ Calibración Histórica (Estimado vs. Real)")
