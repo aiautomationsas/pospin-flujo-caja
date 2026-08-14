@@ -148,33 +148,32 @@ export class SiigoAPIClient {
 
   /**
    * Consulta facturas de venta desde SIIGO.
-   * Rango por defecto: 365 días (1 año completo) para garantizar captura de cartera vencida.
+   * Si diasAtras es 0 o >= 3650, consulta todo el historial sin restricciones de fecha.
    */
   public async consultarFacturasVenta(
     diasAtras: number = 365
   ): Promise<SiigoInvoice[]> {
     const url = `${this.baseUrl}/v1/invoices`;
-
-    const fechaFin = new Date();
-    const fechaInicio = new Date();
-    fechaInicio.setDate(fechaFin.getDate() - diasAtras);
-
-    const fechaFinStr = fechaFin.toISOString().split('T')[0];
-    const fechaInicioStr = fechaInicio.toISOString().split('T')[0];
-
     const headers = await this.getHeaders();
     const facturas: SiigoInvoice[] = [];
     let page = 1;
     const pageSize = 100;
 
+    const queryParams = new URLSearchParams({
+      page_size: pageSize.toString(),
+    });
+
+    if (diasAtras > 0 && diasAtras < 3650) {
+      const fechaFin = new Date();
+      const fechaInicio = new Date();
+      fechaInicio.setDate(fechaFin.getDate() - diasAtras);
+      queryParams.set('date_start', fechaInicio.toISOString().split('T')[0]);
+      queryParams.set('date_end', fechaFin.toISOString().split('T')[0]);
+    }
+
     try {
       while (true) {
-        const queryParams = new URLSearchParams({
-          date_start: fechaInicioStr,
-          date_end: fechaFinStr,
-          page_size: pageSize.toString(),
-          page: page.toString(),
-        });
+        queryParams.set('page', page.toString());
 
         const response = await fetch(`${url}?${queryParams.toString()}`, {
           method: 'GET',
@@ -198,7 +197,7 @@ export class SiigoAPIClient {
         facturas.push(...results);
 
         const totalResults = data.pagination?.total_results || 0;
-        if (facturas.length >= totalResults || page >= 50) {
+        if (facturas.length >= totalResults || page >= 100) {
           break;
         }
 

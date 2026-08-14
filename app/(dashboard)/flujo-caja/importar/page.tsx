@@ -331,6 +331,7 @@ export default function ImportarPage() {
                     <option value={180}>Últimos 180 días (6 Meses)</option>
                     <option value={365}>Últimos 365 días (1 Año - Recomendado)</option>
                     <option value={730}>Últimos 730 días (2 Años - Completo)</option>
+                    <option value={0}>Sin Límite de Fecha (Todas las Facturas Históricas)</option>
                   </select>
                 </div>
 
