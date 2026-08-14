@@ -44,17 +44,16 @@ class MotorProyeccion:
         """Calcula la proyección de flujo de caja para las próximas N semanas.
         
         Returns: lista de dicts con: semana, anio, fecha_inicio, fecha_fin,
-                 saldo_inicial, recaudo, egresos, saldo_final, deficit
+                 saldo_inicial, recaudo, egresos, saldo_final, deficit,
+                 recaudo_real, recaudo_proyectado, egresos_real, egresos_recurrente,
+                 obligaciones, compromisos.
         """
-        import datetime
-        # Obtener semanas ordenadas
         hoy = date.today()
-        iso = hoy.isocalendar()
         semanas_resp = self.client.table("semanas").select("*").gte(
             "fecha_inicio", hoy.isoformat()
         ).order("fecha_inicio").limit(semanas).execute()
 
-        if not semanas_resp.data:
+        if not semanas_resp or not semanas_resp.data:
             return []
 
         # 1. Obtener todas las facturas pendientes/parciales para la proyección de recaudos
@@ -62,89 +61,116 @@ class MotorProyeccion:
             "id, valor, fecha_estimada_recaudo, estado"
         ).in_("estado", ["pendiente", "parcial"]).execute()
         
-        facturas_pendientes = facturas_resp.data or []
+        facturas_pendientes = facturas_resp.data if (facturas_resp and facturas_resp.data) else []
         facturas_map = {}
         for f in facturas_pendientes:
-            # Calcular cuánto se ha recaudado ya de esta factura
             recaudos_f = self.client.table("recaudos").select("valor").eq("factura_id", f["id"]).execute()
-            total_recaudado = sum(float(r["valor"]) for r in recaudos_f.data) if recaudos_f.data else 0.0
+            total_recaudado = sum(float(r["valor"]) for r in recaudos_f.data) if (recaudos_f and recaudos_f.data) else 0.0
             pendiente = float(f["valor"]) - total_recaudado
             if pendiente > 0:
+                f_date = f["fecha_estimada_recaudo"]
+                if isinstance(f_date, str):
+                    f_date = date.fromisoformat(f_date)
                 facturas_map[f["id"]] = {
-                    "fecha_est": date.fromisoformat(f["fecha_estimada_recaudo"]) if isinstance(f["fecha_estimada_recaudo"], str) else f["fecha_estimada_recaudo"],
+                    "fecha_est": f_date,
                     "pendiente": pendiente
                 }
 
         # 2. Obtener todas las plantillas de egresos recurrentes activas
         recurrentes_resp = self.client.table("egresos_recurrentes").select("*").eq("activa", True).execute()
-        recurrentes = recurrentes_resp.data or []
+        recurrentes = recurrentes_resp.data if (recurrentes_resp and recurrentes_resp.data) else []
+
+        # 3. Obtener obligaciones pendientes/parciales (SSOT)
+        try:
+            obligaciones_resp = self.client.table("obligaciones").select("*").in_("estado", ["pendiente", "parcial"]).execute()
+            obligaciones_pendientes = obligaciones_resp.data if (obligaciones_resp and obligaciones_resp.data) else []
+        except Exception:
+            obligaciones_pendientes = []
 
         resultado = []
         saldo_acumulado = None
         primera_semana = True
-        semana_actual_inicio = date.fromisoformat(semanas_resp.data[0]["fecha_inicio"])
 
         for sem in semanas_resp.data:
             semana_id = sem["id"]
-            fecha_inicio = date.fromisoformat(sem["fecha_inicio"])
-            fecha_fin = date.fromisoformat(sem["fecha_fin"])
+            fecha_inicio = date.fromisoformat(sem["fecha_inicio"]) if isinstance(sem["fecha_inicio"], str) else sem["fecha_inicio"]
+            fecha_fin = date.fromisoformat(sem["fecha_fin"]) if isinstance(sem["fecha_fin"], str) else sem["fecha_fin"]
 
-            # Saldo inicial: suma de saldos bancarios de la semana anterior
+            # ── SALDO INICIAL ──
             if saldo_acumulado is None:
-                saldos_resp = self.client.table("saldos_semanales").select("saldo").eq(
-                    "semana_id", semana_id
-                ).execute()
-                saldo_inicial = sum(
-                    float(s["saldo"]) for s in saldos_resp.data
-                ) if saldos_resp.data else 0.0
+                saldo_inicial = 0.0
+                # Intentar desde cuentas_bancarias
+                try:
+                    cuentas_resp = self.client.table("cuentas_bancarias").select("saldo").execute()
+                    if cuentas_resp and isinstance(cuentas_resp.data, list) and cuentas_resp.data:
+                        saldo_inicial = sum(float(c.get("saldo", 0) or 0) for c in cuentas_resp.data if isinstance(c, dict))
+                except Exception:
+                    saldo_inicial = 0.0
+
+                # Si cuentas_bancarias dio 0 o falló, intentar desde saldos_semanales
+                if saldo_inicial == 0.0:
+                    try:
+                        saldos_resp = self.client.table("saldos_semanales").select("saldo").eq(
+                            "semana_id", semana_id
+                        ).execute()
+                        if saldos_resp and isinstance(saldos_resp.data, list) and saldos_resp.data:
+                            saldo_inicial = sum(float(s.get("saldo", 0) or 0) for s in saldos_resp.data if isinstance(s, dict))
+                    except Exception:
+                        pass
             else:
                 saldo_inicial = saldo_acumulado
 
             # ── RECAUDOS DE LA SEMANA ──
-            # A. Recaudos reales registrados para esta semana
             recaudos_resp = self.client.table("recaudos").select("valor").eq(
                 "semana_id", semana_id
             ).execute()
             recaudos_reales = sum(
                 float(r["valor"]) for r in recaudos_resp.data
-            ) if recaudos_resp.data else 0.0
+            ) if (recaudos_resp and isinstance(recaudos_resp.data, list) and recaudos_resp.data) else 0.0
 
-            # B. Recaudos proyectados de facturas pendientes que vencen en esta semana
             recaudos_proyectados = 0.0
             for f_id, f_data in list(facturas_map.items()):
                 f_date = f_data["fecha_est"]
-                # Si es la primera semana, sumar también toda la cartera vencida del pasado
                 if (fecha_inicio <= f_date <= fecha_fin) or (primera_semana and f_date < fecha_inicio):
                     recaudos_proyectados += f_data["pendiente"]
-                    # Remover para no duplicar en semanas futuras
                     facturas_map.pop(f_id)
 
             total_recaudo = recaudos_reales + recaudos_proyectados
 
+            # ── OBLIGACIONES DE LA SEMANA (SSOT) ──
+            total_obligaciones = 0.0
+            obligaciones_cats = set()
+            for ob in obligaciones_pendientes:
+                f_prog = ob.get("fecha_programada_pago")
+                if f_prog:
+                    if isinstance(f_prog, str):
+                        f_prog = date.fromisoformat(f_prog)
+                    if (fecha_inicio <= f_prog <= fecha_fin) or (primera_semana and f_prog < fecha_inicio):
+                        monto_ob = float(ob.get("saldo_pendiente") or ob.get("monto_total") or 0.0)
+                        total_obligaciones += monto_ob
+                        if ob.get("categoria_id") is not None:
+                            obligaciones_cats.add(ob["categoria_id"])
+
             # ── EGRESOS DE LA SEMANA ──
-            # A. Egresos reales registrados para esta semana
             egresos_resp = self.client.table("egresos").select("valor", "categoria_id").eq(
                 "semana_id", semana_id
             ).execute()
-            egresos_reales_map = {e["categoria_id"]: float(e["valor"]) for e in egresos_resp.data} if egresos_resp.data else {}
+            egresos_reales_map = {}
+            if egresos_resp and isinstance(egresos_resp.data, list) and egresos_resp.data:
+                for e in egresos_resp.data:
+                    if isinstance(e, dict) and e.get("categoria_id") is not None:
+                        egresos_reales_map[e["categoria_id"]] = float(e.get("valor", 0) or 0)
             total_egresos_reales = sum(egresos_reales_map.values())
 
-            # B. Egresos proyectados recurrentes (solo si no hay un egreso real de esa categoría ya registrado)
+            # Egresos proyectados recurrentes (solo si no hay egreso real ni obligación para esa categoría en esta semana)
             total_egresos_recurrentes = 0.0
             for rec in recurrentes:
-                if rec["categoria_id"] not in egresos_reales_map:
+                cat_id = rec.get("categoria_id")
+                if cat_id is None or (cat_id not in egresos_reales_map and cat_id not in obligaciones_cats):
                     if self._evaluar_recurrencia(rec, fecha_inicio, fecha_fin):
-                        total_egresos_recurrentes += float(rec["monto_estimado"])
+                        total_egresos_recurrentes += float(rec.get("monto_estimado", 0) or 0.0)
 
-            # C. Compromisos pendientes en esta semana
-            compromisos_resp = self.client.table("compromisos").select("valor").eq(
-                "estado", "pendiente"
-            ).gte("fecha", sem["fecha_inicio"]).lte("fecha", sem["fecha_fin"]).execute()
-            total_compromisos = sum(
-                float(c["valor"]) for c in compromisos_resp.data
-            ) if compromisos_resp.data else 0.0
-
-            total_egresos = total_egresos_reales + total_egresos_recurrentes + total_compromisos
+            total_egresos = total_egresos_reales + total_egresos_recurrentes + total_obligaciones
             saldo_final = saldo_inicial + total_recaudo - total_egresos
             deficit = saldo_final < 0
 
@@ -152,8 +178,8 @@ class MotorProyeccion:
                 "semana_id": semana_id,
                 "semana": sem["numero"],
                 "anio": sem["anio"],
-                "fecha_inicio": sem["fecha_inicio"],
-                "fecha_fin": sem["fecha_fin"],
+                "fecha_inicio": str(sem["fecha_inicio"]),
+                "fecha_fin": str(sem["fecha_fin"]),
                 "saldo_inicial": saldo_inicial,
                 "recaudo": total_recaudo,
                 "recaudo_real": recaudos_reales,
@@ -161,7 +187,8 @@ class MotorProyeccion:
                 "egresos": total_egresos,
                 "egresos_real": total_egresos_reales,
                 "egresos_recurrente": total_egresos_recurrentes,
-                "compromisos": total_compromisos,
+                "obligaciones": total_obligaciones,
+                "compromisos": total_obligaciones,
                 "saldo_final": saldo_final,
                 "deficit": deficit,
             })
