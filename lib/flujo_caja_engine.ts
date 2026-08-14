@@ -158,9 +158,9 @@ export function evaluarRecurrencia(
 }
 
 /**
- * Calcula la proyección de flujo de caja semana a semana para las próximas N semanas.
- * Optimizado mediante Bulk Query Batching en paralelo (Promise.all)
- * e indexación en memoria con Map/Set para cálculos sub-milisegundo.
+ * Calcula la proyección de flujo de caja semana a semana para las próximas N semanas (SSOT).
+ * Incluye obligaciones (cuentas por pagar), recaudos proyectados de facturas,
+ * egresos recurrentes y saldo inicial derivado de cuentas bancarias.
  */
 export async function calcularProyeccionFlujoCaja(
   supabaseClient: unknown,
@@ -188,16 +188,16 @@ export async function calcularProyeccionFlujoCaja(
 
   const semanaList = semanasData as Semana[];
   const semanaIds = semanaList.map((s) => s.id);
-  const minFecha = semanaList[0].fecha_inicio;
-  const maxFecha = semanaList[semanaList.length - 1].fecha_fin;
 
-  // Consultas masivas en paralelo (Bulk Fetching)
+  // Consultas masivas en paralelo (Bulk Fetching SSOT)
   const [
     facturasRes,
     recaudosRes,
     egresosRes,
+    obligacionesRes,
     compromisosRes,
     saldosRes,
+    cuentasRes,
     recurrentesRes,
   ] = await Promise.all([
     supabase
@@ -213,57 +213,42 @@ export async function calcularProyeccionFlujoCaja(
       .select('id, valor, semana_id, categoria_id')
       .in('semana_id', semanaIds),
     supabase
+      .from('obligaciones')
+      .select('id, tercero, concepto, saldo_pendiente, fecha_programada_pago, fecha_vencimiento, estado')
+      .in('estado', ['pendiente', 'parcial', 'reprogramada', 'vencida']),
+    supabase
       .from('compromisos')
       .select('id, valor, fecha, estado')
-      .eq('estado', 'pendiente')
-      .gte('fecha', minFecha)
-      .lte('fecha', maxFecha),
+      .eq('estado', 'pendiente'),
     supabase
       .from('saldos_semanales')
       .select('id, saldo, semana_id')
       .in('semana_id', semanaIds),
+    supabase
+      .from('cuentas_bancarias')
+      .select('saldo')
+      .eq('activa', true),
     supabase
       .from('egresos_recurrentes')
       .select('*')
       .eq('activa', true),
   ]);
 
-  if (facturasRes.error) {
-    console.error('Error al consultar facturas:', facturasRes.error);
-    throw facturasRes.error;
-  }
-  if (recaudosRes.error) {
-    console.error('Error al consultar recaudos:', recaudosRes.error);
-    throw recaudosRes.error;
-  }
-  if (egresosRes.error) {
-    console.error('Error al consultar egresos:', egresosRes.error);
-    throw egresosRes.error;
-  }
-  if (compromisosRes.error) {
-    console.error('Error al consultar compromisos:', compromisosRes.error);
-    throw compromisosRes.error;
-  }
-  if (saldosRes.error) {
-    console.error('Error al consultar saldos_semanales:', saldosRes.error);
-    throw saldosRes.error;
-  }
-  if (recurrentesRes.error) {
-    console.error('Error al consultar egresos recurrentes:', recurrentesRes.error);
-    throw recurrentesRes.error;
-  }
-
-  // 1. Indexación en memoria: Saldos iniciales por semana_id
-  const saldosPorSemanaMap = new Map<number, number>();
-  for (const s of (saldosRes.data || []) as Array<{ saldo?: number | string; semana_id?: number }>) {
-    const semId = Number(s.semana_id);
-    saldosPorSemanaMap.set(
-      semId,
-      (saldosPorSemanaMap.get(semId) || 0) + Number(s.saldo || 0)
+  // 1. Saldo inicial base desde cuentas bancarias activas
+  let saldoCuentasInicial = 0;
+  if (cuentasRes.data && cuentasRes.data.length > 0) {
+    saldoCuentasInicial = cuentasRes.data.reduce(
+      (acc: number, c: { saldo?: number | string }) => acc + Number(c.saldo || 0),
+      0
+    );
+  } else if (saldosRes.data && saldosRes.data.length > 0) {
+    saldoCuentasInicial = saldosRes.data.reduce(
+      (acc: number, s: { saldo?: number | string }) => acc + Number(s.saldo || 0),
+      0
     );
   }
 
-  // 2. Indexación en memoria: Recaudos reales por semana_id y recaudos por factura_id
+  // 2. Indexación en memoria: Recaudos reales por semana_id
   const recaudosPorSemanaMap = new Map<number, number>();
   const recaudosPorFacturaMap = new Map<number, number>();
   for (const r of (recaudosRes.data || []) as Array<{ valor?: number | string; semana_id?: number; factura_id?: number }>) {
@@ -312,7 +297,7 @@ export async function calcularProyeccionFlujoCaja(
     }
   }
 
-  // 4. Indexación en memoria: Egresos reales por semana_id y categorías
+  // 4. Indexación en memoria: Egresos reales por semana_id
   const egresosPorSemanaMap = new Map<number, number>();
   const egresosCategoriasPorSemanaMap = new Map<number, Set<number>>();
   for (const e of (egresosRes.data || []) as Array<{
@@ -335,7 +320,16 @@ export async function calcularProyeccionFlujoCaja(
     egresosCategoriasPorSemanaMap.get(semId)!.add(catId);
   }
 
-  // 5. Compromisos en memoria
+  // 5. Indexación en memoria: Obligaciones (Cuentas por Pagar SSOT)
+  const obligacionesList = (obligacionesRes.data || []) as Array<{
+    id: number;
+    saldo_pendiente?: number | string;
+    fecha_programada_pago?: string;
+    fecha_vencimiento?: string;
+    estado?: string;
+  }>;
+
+  // Fallback compromisos legacy
   const compromisosList = (compromisosRes.data || []) as Array<{
     valor?: number | string;
     fecha?: string;
@@ -357,16 +351,13 @@ export async function calcularProyeccionFlujoCaja(
     // Saldo inicial de la semana
     let saldoInicial = 0;
     if (saldoAcumulado === null) {
-      saldoInicial = saldosPorSemanaMap.get(semanaId) || 0;
+      saldoInicial = saldoCuentasInicial;
     } else {
       saldoInicial = saldoAcumulado;
     }
 
     // ── RECAUDOS DE LA SEMANA ──
-    // A. Recaudos reales
     const recaudosReales = recaudosPorSemanaMap.get(semanaId) || 0;
-
-    // B. Recaudos proyectados de facturas pendientes
     let recaudosProyectados = 0;
     const idsToRemove: number[] = [];
 
@@ -382,16 +373,14 @@ export async function calcularProyeccionFlujoCaja(
     });
 
     idsToRemove.forEach((id) => facturasMap.delete(id));
-
     const totalRecaudo = recaudosReales + recaudosProyectados;
 
     // ── EGRESOS DE LA SEMANA ──
-    // A. Egresos reales
     const totalEgresosReales = egresosPorSemanaMap.get(semanaId) || 0;
     const categoriasConEgresoReal =
       egresosCategoriasPorSemanaMap.get(semanaId) || new Set<number>();
 
-    // B. Egresos proyectados recurrentes (se omiten si ya existe un egreso real de esa categoría)
+    // Egresos proyectados recurrentes
     let totalEgresosRecurrentes = 0;
     for (const rec of recurrentes) {
       if (!categoriasConEgresoReal.has(rec.categoria_id)) {
@@ -401,17 +390,34 @@ export async function calcularProyeccionFlujoCaja(
       }
     }
 
-    // C. Compromisos pendientes en el rango de fechas de la semana
-    let totalCompromisos = 0;
-    for (const c of compromisosList) {
-      const cFecha = c.fecha || '';
-      if (cFecha >= fechaInicioStr && cFecha <= fechaFinStr) {
-        totalCompromisos += Number(c.valor || 0);
+    // Obligaciones (Cuentas por Pagar SSOT) asignadas a la semana
+    let totalObligacionesSemana = 0;
+    for (const ob of obligacionesList) {
+      const fechaPago = ob.fecha_programada_pago || ob.fecha_vencimiento || '';
+      const pendiente = Number(ob.saldo_pendiente || 0);
+
+      if (
+        (fechaPago >= fechaInicioStr && fechaPago <= fechaFinStr) ||
+        (primeraSemana && fechaPago < fechaInicioStr)
+      ) {
+        totalObligacionesSemana += pendiente;
       }
     }
 
-    const totalEgresos =
-      totalEgresosReales + totalEgresosRecurrentes + totalCompromisos;
+    // Fallback compromisos
+    if (totalObligacionesSemana === 0) {
+      for (const c of compromisosList) {
+        const cFecha = c.fecha || '';
+        if (
+          (cFecha >= fechaInicioStr && cFecha <= fechaFinStr) ||
+          (primeraSemana && cFecha < fechaInicioStr)
+        ) {
+          totalObligacionesSemana += Number(c.valor || 0);
+        }
+      }
+    }
+
+    const totalEgresos = totalEgresosReales + totalEgresosRecurrentes + totalObligacionesSemana;
     const saldoFinal = saldoInicial + totalRecaudo - totalEgresos;
     const deficit = saldoFinal < 0;
 
@@ -428,7 +434,7 @@ export async function calcularProyeccionFlujoCaja(
       egresos: totalEgresos,
       egresos_real: totalEgresosReales,
       egresos_recurrente: totalEgresosRecurrentes,
-      compromisos: totalCompromisos,
+      compromisos: totalObligacionesSemana,
       saldo_final: saldoFinal,
       deficit,
     });
@@ -448,20 +454,20 @@ export async function guardarSnapshotProyeccion(
   semanaId: number,
   recaudoEst: number,
   egresosEst: number,
-  saldoEst: number
+  saldoFinalEst: number
 ): Promise<void> {
   const supabase = supabaseClient as SupabaseClient;
-  const congeladoAt = new Date().toISOString().split('T')[0];
 
-  const { error } = await supabase
-    .from('snapshots_proyeccion')
-    .upsert({
+  const { error } = await supabase.from('snapshots_proyeccion').upsert(
+    {
       semana_id: semanaId,
       recaudo_estimado: recaudoEst,
       egresos_estimado: egresosEst,
-      saldo_final_estimado: saldoEst,
-      congelado_at: congeladoAt,
-    });
+      saldo_final_estimado: saldoFinalEst,
+      congelado_at: new Date().toISOString(),
+    },
+    { onConflict: 'semana_id' }
+  );
 
   if (error) {
     console.error('Error al guardar snapshot de proyección:', error);
@@ -470,199 +476,177 @@ export async function guardarSnapshotProyeccion(
 }
 
 /**
- * Compara las estimaciones congeladas históricas contra los resultados reales.
- * Optimizado con bulk queries en paralelo para evitar N+1 queries.
+ * Compara los resultados proyectados congelados con los reales acumulados.
  */
 export async function obtenerCalibracionProyeccion(
   supabaseClient: unknown,
-  limiteSemanas: number = 4
+  n: number = 6
 ): Promise<CalibracionProyeccion[]> {
   const supabase = supabaseClient as SupabaseClient;
-  const { data: snapshotsData, error } = await supabase
-    .from('snapshots_proyeccion')
-    .select('*, semanas(*)')
-    .order('congelado_at', { ascending: false })
-    .limit(limiteSemanas);
 
-  if (error) {
-    console.error('Error obteniendo snapshots:', error);
-    throw error;
+  const { data: snapshots, error: errSnapshots } = await supabase
+    .from('snapshots_proyeccion')
+    .select('*, semanas!inner(numero, anio, fecha_inicio)')
+    .order('semana_id', { ascending: false })
+    .limit(n);
+
+  if (errSnapshots) {
+    console.error('Error al obtener snapshots de proyección:', errSnapshots);
+    throw errSnapshots;
   }
 
-  if (!snapshotsData || snapshotsData.length === 0) {
+  if (!snapshots || snapshots.length === 0) {
     return [];
   }
 
-  const snapSemanaIds = snapshotsData.map((s) => s.semana_id);
+  const calibraciones: CalibracionProyeccion[] = [];
 
-  // Bulk queries en paralelo
-  const [recaudosRes, egresosRes, saldosRes] = await Promise.all([
-    supabase
+  for (const snap of snapshots) {
+    const semId = snap.semana_id;
+    const semInfo = snap.semanas as unknown as { numero: number; anio: number; fecha_inicio: string };
+
+    const { data: recData } = await supabase
       .from('recaudos')
-      .select('valor, semana_id')
-      .in('semana_id', snapSemanaIds),
-    supabase
+      .select('valor')
+      .eq('semana_id', semId);
+
+    const recaudoReal = (recData || []).reduce(
+      (sum: number, r: { valor: number }) => sum + Number(r.valor || 0),
+      0
+    );
+
+    const { data: egrData } = await supabase
       .from('egresos')
-      .select('valor, semana_id')
-      .in('semana_id', snapSemanaIds),
-    supabase
+      .select('valor')
+      .eq('semana_id', semId);
+
+    const egresosReal = (egrData || []).reduce(
+      (sum: number, e: { valor: number }) => sum + Number(e.valor || 0),
+      0
+    );
+
+    const { data: saldosData } = await supabase
       .from('saldos_semanales')
-      .select('saldo, semana_id')
-      .in('semana_id', snapSemanaIds),
-  ]);
+      .select('saldo')
+      .eq('semana_id', semId);
 
-  if (recaudosRes.error) throw recaudosRes.error;
-  if (egresosRes.error) throw egresosRes.error;
-  if (saldosRes.error) throw saldosRes.error;
+    const saldoReal = (saldosData || []).reduce(
+      (sum: number, s: { saldo: number }) => sum + Number(s.saldo || 0),
+      0
+    );
 
-  const recaudosMap = new Map<number, number>();
-  for (const r of (recaudosRes.data || []) as Array<{ valor?: number | string; semana_id?: number }>) {
-    const semId = Number(r.semana_id);
-    recaudosMap.set(semId, (recaudosMap.get(semId) || 0) + Number(r.valor || 0));
-  }
+    const recaudoEst = Number(snap.recaudo_estimado || 0);
+    const egresosEst = Number(snap.egresos_estimado || 0);
+    const saldoEst = Number(snap.saldo_final_estimado || 0);
 
-  const egresosMap = new Map<number, number>();
-  for (const e of (egresosRes.data || []) as Array<{ valor?: number | string; semana_id?: number }>) {
-    const semId = Number(e.semana_id);
-    egresosMap.set(semId, (egresosMap.get(semId) || 0) + Number(e.valor || 0));
-  }
-
-  const saldosMap = new Map<number, number>();
-  for (const s of (saldosRes.data || []) as Array<{ saldo?: number | string; semana_id?: number }>) {
-    const semId = Number(s.semana_id);
-    saldosMap.set(semId, (saldosMap.get(semId) || 0) + Number(s.saldo || 0));
-  }
-
-  const resultado: CalibracionProyeccion[] = [];
-
-  for (const snap of snapshotsData) {
-    const semana = snap.semanas;
-    const semanaId = snap.semana_id;
-
-    const realRecaudo = recaudosMap.get(semanaId) || 0;
-    const realEgresos = egresosMap.get(semanaId) || 0;
-    const saldoInicialReal = saldosMap.get(semanaId) || 0;
-
-    const realSaldoFinal = saldoInicialReal + realRecaudo - realEgresos;
-
-    const recaudoEst = Number(snap.recaudo_estimado);
-    const egresosEst = Number(snap.egresos_estimado);
-    const saldoEst = Number(snap.saldo_final_estimado);
-
-    resultado.push({
-      semana: semana?.numero || 0,
-      anio: semana?.anio || 0,
-      fecha_inicio: semana?.fecha_inicio || '',
+    calibraciones.push({
+      semana: semInfo.numero,
+      anio: semInfo.anio,
+      fecha_inicio: semInfo.fecha_inicio,
       recaudo_estimado: recaudoEst,
-      recaudo_real: realRecaudo,
-      recaudo_desvio: realRecaudo - recaudoEst,
+      recaudo_real: recaudoReal,
+      recaudo_desvio: recaudoReal - recaudoEst,
       egresos_estimado: egresosEst,
-      egresos_real: realEgresos,
-      egresos_desvio: realEgresos - egresosEst,
+      egresos_real: egresosReal,
+      egresos_desvio: egresosReal - egresosEst,
       saldo_estimado: saldoEst,
-      saldo_real: realSaldoFinal,
-      saldo_desvio: realSaldoFinal - saldoEst,
+      saldo_real: saldoReal,
+      saldo_desvio: saldoReal - saldoEst,
     });
   }
 
-  return resultado;
+  return calibraciones;
 }
 
 /**
- * Retorna saldo por cuenta bancaria para una semana dada.
+ * Consulta los saldos reales actuales desglosados por cuenta bancaria.
  */
 export async function obtenerSaldoPorCuenta(
-  supabaseClient: unknown,
-  semanaId: number
+  supabaseClient: unknown
 ): Promise<SaldoPorCuenta[]> {
   const supabase = supabaseClient as SupabaseClient;
-  const { data, error } = await supabase
-    .from('saldos_semanales')
-    .select('saldo, cuenta_id, cuentas_bancarias(nombre, banco, numero)')
-    .eq('semana_id', semanaId);
 
-  if (error) {
-    console.error('Error al obtener saldos por cuenta:', error);
-    throw error;
+  const { data: cuentas, error: errCuentas } = await supabase
+    .from('cuentas_bancarias')
+    .select('id, nombre, banco, numero, saldo')
+    .eq('activa', true)
+    .order('nombre', { ascending: true });
+
+  if (errCuentas) {
+    console.error('Error al obtener saldos por cuenta:', errCuentas);
+    throw errCuentas;
   }
 
-  if (!data) {
-    return [];
-  }
-
-  return data.map((r: Record<string, unknown>) => {
-    const cuenta = (r.cuentas_bancarias as Record<string, string>) || {};
-    return {
-      cuenta_id: Number(r.cuenta_id || 0),
-      nombre: cuenta.nombre || 'N/A',
-      banco: cuenta.banco || 'N/A',
-      numero: cuenta.numero || 'N/A',
-      saldo: Number(r.saldo || 0),
-    };
-  });
+  return (cuentas || []).map((c) => ({
+    cuenta_id: c.id,
+    nombre: c.nombre,
+    banco: c.banco,
+    numero: c.numero,
+    saldo: Number(c.saldo || 0),
+  }));
 }
 
 /**
- * Retorna recaudo pendiente agrupado por cliente.
+ * Obtiene el detalle de recaudos pendientes agrupados por cliente.
  */
 export async function obtenerRecaudoPendienteCliente(
   supabaseClient: unknown
 ): Promise<RecaudoPendienteCliente[]> {
   const supabase = supabaseClient as SupabaseClient;
-  const { data: facturasData, error } = await supabase
+
+  const { data: facturas, error: errFacturas } = await supabase
     .from('facturas')
-    .select('id, numero, valor, estado, clientes(nombre), recaudos(valor)')
+    .select('numero, valor, clientes(nombre), recaudos(valor)')
     .in('estado', ['pendiente', 'parcial']);
 
-  if (error) {
-    console.error('Error al obtener recaudo pendiente:', error);
-    throw error;
+  if (errFacturas) {
+    console.error('Error al obtener recaudos pendientes por cliente:', errFacturas);
+    throw errFacturas;
   }
 
-  if (!facturasData) {
-    return [];
-  }
+  const clienteMap = new Map<string, RecaudoPendienteCliente>();
 
-  const clientesMap = new Map<string, RecaudoPendienteCliente>();
+  for (const f of facturas || []) {
+    const clienteNombre =
+      (f.clientes as unknown as { nombre: string })?.nombre || 'Cliente Desconocido';
 
-  for (const f of facturasData) {
-    const clientesObj = Array.isArray(f.clientes) ? f.clientes[0] : f.clientes;
-    const clienteNombre = (clientesObj as { nombre?: string })?.nombre || 'Desconocido';
+    const totalRecaudado = (
+      (f.recaudos as unknown as Array<{ valor: number }>) || []
+    ).reduce((sum, r) => sum + Number(r.valor || 0), 0);
 
-    if (!clientesMap.has(clienteNombre)) {
-      clientesMap.set(clienteNombre, {
-        cliente: clienteNombre,
-        facturas: [],
-        total_pendiente: 0,
+    const pendiente = Number(f.valor || 0) - totalRecaudado;
+
+    if (pendiente > 0) {
+      if (!clienteMap.has(clienteNombre)) {
+        clienteMap.set(clienteNombre, {
+          cliente: clienteNombre,
+          facturas: [],
+          total_pendiente: 0,
+        });
+      }
+
+      const item = clienteMap.get(clienteNombre)!;
+      item.facturas.push({
+        numero: f.numero,
+        valor: Number(f.valor || 0),
+        pendiente,
       });
+      item.total_pendiente += pendiente;
     }
-
-    const valor = Number(f.valor);
-    const recaudosList = f.recaudos || [];
-    const totalRecaudado = Array.isArray(recaudosList)
-      ? recaudosList.reduce((acc: number, r: Record<string, unknown>) => acc + Number(r.valor), 0)
-      : 0;
-
-    const pendiente = Math.max(valor - totalRecaudado, 0);
-
-    const clientObj = clientesMap.get(clienteNombre)!;
-    clientObj.facturas.push({
-      numero: f.numero,
-      valor,
-      pendiente,
-    });
-    clientObj.total_pendiente += pendiente;
   }
 
-  return Array.from(clientesMap.values());
+  return Array.from(clienteMap.values()).sort(
+    (a, b) => b.total_pendiente - a.total_pendiente
+  );
 }
 
 /**
- * Retorna semanas donde el saldo proyectado es negativo (déficit).
+ * Retorna las semanas proyectadas que presenten un saldo final negativo (déficit de liquidez).
  */
 export async function obtenerAlertasDeficit(
-  supabaseClient: unknown
+  supabaseClient: unknown,
+  semanas: number = 12
 ): Promise<ProyeccionSemanal[]> {
-  const proyeccion = await calcularProyeccionFlujoCaja(supabaseClient, 12);
-  return proyeccion.filter((p) => p.deficit);
+  const proyecciones = await calcularProyeccionFlujoCaja(supabaseClient, semanas);
+  return proyecciones.filter((p) => p.deficit);
 }
