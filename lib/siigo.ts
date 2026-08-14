@@ -92,48 +92,6 @@ export class SiigoAPIClient {
   }
 
   /**
-   * Consulta detalle de una factura específica por su UUID en SIIGO.
-   */
-  public async consultarFacturaPorId(id: string): Promise<Record<string, unknown> | null> {
-    const url = `${this.baseUrl}/v1/invoices/${id}`;
-    const headers = await this.getHeaders();
-    try {
-      const res = await fetch(url, { method: 'GET', headers });
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Consulta el informe oficial de Cuentas por Cobrar (Cartera Vigente) en SIIGO.
-   */
-  public async consultarCuentasPorCobrar(): Promise<Record<string, unknown>[]> {
-    const url = `${this.baseUrl}/v1/accounts-receivable`;
-    const headers = await this.getHeaders();
-    const cuentas: Record<string, unknown>[] = [];
-    let page = 1;
-
-    try {
-      while (true) {
-        const res = await fetch(`${url}?page_size=100&page=${page}`, { method: 'GET', headers });
-        if (!res.ok) break;
-        const data = await res.json();
-        const results = data.results || [];
-        if (results.length === 0) break;
-        cuentas.push(...results);
-        const total = data.pagination?.total_results || 0;
-        if (cuentas.length >= total || page >= 50) break;
-        page++;
-      }
-      return cuentas;
-    } catch {
-      return cuentas;
-    }
-  }
-
-  /**
    * Consulta detalles de un cliente en SIIGO por NIT o ID para obtener la Razón Social real.
    */
   public async obtenerNombreClienteReal(nitOrId: string): Promise<string | null> {
@@ -268,6 +226,56 @@ export class SiigoAPIClient {
   }
 
   /**
+   * Consulta Recibos de Caja / Comprobantes de Pago en SIIGO (vouchers).
+   */
+  public async consultarRecibosCaja(): Promise<Record<string, unknown>[]> {
+    const url = `${this.baseUrl}/v1/vouchers`;
+    const headers = await this.getHeaders();
+    const recibos: Record<string, unknown>[] = [];
+    let page = 1;
+    const pageSize = 100;
+
+    try {
+      while (true) {
+        const queryParams = new URLSearchParams({
+          page_size: pageSize.toString(),
+          page: page.toString(),
+        });
+
+        const response = await fetch(`${url}?${queryParams.toString()}`, {
+          method: 'GET',
+          headers,
+        });
+
+        if (!response.ok) {
+          break;
+        }
+
+        const data = await response.json();
+        const results: Record<string, unknown>[] = data.results || [];
+
+        if (results.length === 0) {
+          break;
+        }
+
+        recibos.push(...results);
+
+        const totalResults = data.pagination?.total_results || 0;
+        if (recibos.length >= totalResults || page >= 10) {
+          break;
+        }
+
+        page++;
+      }
+
+      return recibos;
+    } catch (error: unknown) {
+      console.warn('Error al consultar recibos de caja en SIIGO:', error);
+      return [];
+    }
+  }
+
+  /**
    * Consulta el reporte de cuentas por pagar en SIIGO.
    */
   public async consultarCuentasPorPagar(): Promise<Record<string, unknown>[]> {
@@ -364,7 +372,7 @@ function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string
 
 /**
  * Sincroniza facturas y clientes desde SIIGO a Supabase en lote ultra-optimizado.
- * Extrae correctamente `balance` y `payments[].due_date` aplicando la regla oficial de SIIGO API.
+ * Cruzando también los Recibos de Caja (vouchers) para abonar facturas pagadas.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
@@ -384,6 +392,27 @@ export async function sincronizarCarteraSiigo(
     const facturasSiigo = await siigoClient.consultarFacturasVenta(diasAtras);
     if (!facturasSiigo || facturasSiigo.length === 0) {
       return stats;
+    }
+
+    // Consultar Recibos de Caja (Vouchers) para cruzar pagos reales
+    const recibosCaja = await siigoClient.consultarRecibosCaja().catch(() => []);
+
+    // Mapa de abonos/pagos acumulados por número de factura o id de factura
+    const abonosPorFactura = new Map<string, number>();
+    for (const rc of recibosCaja) {
+      const items = Array.isArray(rc.items) ? (rc.items as Record<string, unknown>[]) : [];
+      for (const item of items) {
+        const inv = item.invoice as Record<string, unknown> | undefined;
+        const val = Number(item.value || 0);
+        if (inv && val > 0) {
+          const num = String(inv.number || '');
+          const prefix = String(inv.prefix || '');
+          const numComp = prefix ? `${prefix}${num}` : num;
+          if (numComp) {
+            abonosPorFactura.set(numComp, (abonosPorFactura.get(numComp) || 0) + val);
+          }
+        }
+      }
     }
 
     // 1. Pre-cargar nombres de clientes en paralelo desde SIIGO API
@@ -479,48 +508,42 @@ export async function sincronizarCarteraSiigo(
 
       const valor = Number(fSiigo.total || 0);
 
-      // Extraer saldo pendiente real (balance) desde la raíz del objeto de SIIGO
-      let balance = valor;
+      // Extraer saldo pendiente base (balance) desde SIIGO
+      let baseBalance = valor;
       if (typeof fSiigo.balance === 'number') {
-        balance = fSiigo.balance;
+        baseBalance = fSiigo.balance;
       } else if (fSiigo.due && typeof (fSiigo.due as unknown as Record<string, unknown>).balance === 'number') {
-        balance = Number((fSiigo.due as unknown as Record<string, unknown>).balance);
+        baseBalance = Number((fSiigo.due as unknown as Record<string, unknown>).balance);
       }
 
-      // Extraer fechas de vencimiento desde el arreglo payments
-      const fechaEmision = fSiigo.date;
-      const payments = Array.isArray(fSiigo.payments) ? (fSiigo.payments as Array<Record<string, unknown>>) : [];
-      let fechaVencimiento = fechaEmision;
+      // Restar abonos encontrados en Recibos de Caja (vouchers)
+      const totalAbonado = abonosPorFactura.get(numeroCompleto) || 0;
+      const balance = Math.max(0, baseBalance - totalAbonado);
 
-      if (payments.length > 0) {
-        const firstPaymentWithDate = payments.find((p) => p && typeof p.due_date === 'string' && p.due_date.trim());
-        if (firstPaymentWithDate && typeof firstPaymentWithDate.due_date === 'string') {
-          fechaVencimiento = firstPaymentWithDate.due_date.trim();
+      // Extraer fecha de vencimiento real desde la lista de pagos/cuotas (payments[0].due_date)
+      const fechaEmision = fSiigo.date;
+      let fechaVencimiento = fechaEmision;
+      if (Array.isArray(fSiigo.payments) && fSiigo.payments.length > 0) {
+        const p0 = fSiigo.payments[0] as Record<string, unknown>;
+        if (p0 && typeof p0.due_date === 'string' && p0.due_date.trim()) {
+          fechaVencimiento = p0.due_date.trim();
         }
       } else if (fSiigo.due && typeof (fSiigo.due as unknown as Record<string, unknown>).date === 'string') {
         fechaVencimiento = String((fSiigo.due as unknown as Record<string, unknown>).date);
       }
 
-      // REGLA OFICIAL DE SIIGO:
-      // 1. Pagada: balance === 0
-      // 2. Vencida: balance > 0 Y al menos un vencimiento (payments[].due_date) es < hoy
-      // 3. Pendiente: balance > 0 Y vencimiento >= hoy
+      // Determinar estado contable de la factura
       let estado: 'pagada' | 'parcial' | 'vencida' | 'pendiente';
       if (balance <= 0) {
         estado = 'pagada';
       } else if (balance < valor) {
-        // Pago parcial registrado
-        const tieneVencimientoPasado = payments.some(
-          (p) => p && typeof p.due_date === 'string' && p.due_date.trim() < hoyStr
-        );
-        estado = tieneVencimientoPasado ? 'vencida' : 'parcial';
+        estado = 'parcial';
       } else {
-        // Sin pagos (balance === valor)
-        const tieneVencimientoPasado = payments.length > 0
-          ? payments.some((p) => p && typeof p.due_date === 'string' && p.due_date.trim() < hoyStr)
-          : fechaVencimiento < hoyStr;
-
-        estado = tieneVencimientoPasado ? 'vencida' : 'pendiente';
+        if (fechaVencimiento < hoyStr) {
+          estado = 'vencida';
+        } else {
+          estado = 'pendiente';
+        }
       }
 
       if (stats.facturas_detalle) {
