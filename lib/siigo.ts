@@ -13,6 +13,7 @@ export class SiigoAPIClient {
   private partnerId: string;
   private token: string | null = null;
   private tokenExpiresAt: number | null = null;
+  private customerCache: Map<string, string> = new Map();
 
   constructor(credentials?: Partial<SiigoCredentials>) {
     this.username =
@@ -88,6 +89,61 @@ export class SiigoAPIClient {
       'Partner-Id': this.partnerId,
       'Content-Type': 'application/json',
     };
+  }
+
+  /**
+   * Consulta detalles de un cliente en SIIGO por NIT o ID para obtener la Razón Social real.
+   */
+  public async obtenerNombreClienteReal(nitOrId: string): Promise<string | null> {
+    if (!nitOrId) return null;
+    if (this.customerCache.has(nitOrId)) {
+      return this.customerCache.get(nitOrId) || null;
+    }
+
+    try {
+      const headers = await this.getHeaders();
+      const response = await fetch(`${this.baseUrl}/v1/customers?identification=${encodeURIComponent(nitOrId)}`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json();
+      const results = data.results || [];
+      if (results.length > 0) {
+        const cust = results[0];
+        let realName = '';
+        if (Array.isArray(cust.name)) {
+          realName = cust.name.map((n: unknown) => (typeof n === 'string' ? n.trim() : '')).filter(Boolean).join(' ');
+        } else if (typeof cust.name === 'string') {
+          realName = cust.name.trim();
+        }
+
+        if (!realName && typeof cust.company_name === 'string') {
+          realName = cust.company_name.trim();
+        }
+
+        if (!realName && cust.person_name) {
+          if (typeof cust.person_name === 'string') realName = cust.person_name.trim();
+          else if (typeof cust.person_name === 'object') {
+            const p = cust.person_name as Record<string, string>;
+            realName = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
+          }
+        }
+
+        if (realName) {
+          this.customerCache.set(nitOrId, realName);
+          return realName;
+        }
+      }
+    } catch (err) {
+      console.warn(`No se pudo consultar nombre de cliente para NIT ${nitOrId}:`, err);
+    }
+
+    return null;
   }
 
   /**
@@ -250,19 +306,11 @@ function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string
     name = customer.commercial_name.trim();
   }
 
-  if (!name && nit && nit !== '900000000') {
-    name = `Cliente NIT ${nit}`;
-  }
-
-  if (!name) {
-    name = 'Cliente SIIGO Colombia';
-  }
-
   return { name, nit };
 }
 
 /**
- * Sincroniza facturas y clientes desde SIIGO a Supabase con detalle extendido y rango ampliado.
+ * Sincroniza facturas y clientes desde SIIGO a Supabase con detalle extendido y consulta directa de Razon Social.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
@@ -288,7 +336,18 @@ export async function sincronizarCarteraSiigo(
 
     for (const fSiigo of facturasSiigo) {
       const customerRaw = (fSiigo.customer as unknown as Record<string, unknown>) || {};
-      const { name: customerName, nit: customerNit } = parseCustomerInfo(customerRaw);
+      const { nit: customerNit } = parseCustomerInfo(customerRaw);
+      let { name: customerName } = parseCustomerInfo(customerRaw);
+
+      // Si el nombre no venía directo en el objeto de la factura, consultarlo desde /v1/customers de SIIGO
+      if (!customerName || customerName.startsWith('Cliente NIT')) {
+        const fetchedName = await siigoClient.obtenerNombreClienteReal(customerNit);
+        if (fetchedName) {
+          customerName = fetchedName;
+        } else if (!customerName) {
+          customerName = `Cliente NIT ${customerNit}`;
+        }
+      }
 
       // 1. Sincronizar Cliente en Supabase
       let clienteId: number | null = null;
@@ -318,7 +377,6 @@ export async function sincronizarCarteraSiigo(
 
         if (errInsertCliente) {
           console.error('Error al crear cliente en Supabase:', errInsertCliente);
-          // Fallback en caso de duplicados
           const { data: cFallback } = await supabase.from('clientes').select('id').limit(1);
           clienteId = cFallback?.[0]?.id || 101;
         } else {
@@ -379,6 +437,7 @@ export async function sincronizarCarteraSiigo(
         const { error: errUpdate } = await supabase
           .from('facturas')
           .update({
+            cliente_id: clienteId,
             valor,
             estado,
             fecha_vencimiento: fechaVencimiento,
