@@ -5,6 +5,11 @@ import type { SiigoSyncLog } from '@/types/flujo_caja';
 import { formatFechaEsp } from '@/lib/format';
 import { supabase } from '@/lib/supabaseClient';
 import FlujoCajaSubNav from '@/components/flujo-caja/FlujoCajaSubNav';
+import {
+  getCachedSyncLogs,
+  setCachedSyncLogs,
+  clearAllFlujoCajaCache,
+} from '@/lib/flujoCajaCache';
 import { Button } from '@/components/ui/button';
 import {
   RefreshCw,
@@ -48,7 +53,16 @@ export default function ImportarPage() {
   }, []);
 
   async function fetchLogs() {
-    setLoadingLogs(true);
+    // 1. Cargar de inmediato desde la caché si existe (0 ms wait)
+    const cachedLogs = getCachedSyncLogs();
+    if (cachedLogs && cachedLogs.length > 0) {
+      setSyncLogs(cachedLogs);
+      setLoadingLogs(false);
+    } else {
+      setLoadingLogs(true);
+    }
+
+    // 2. Revalidar en segundo plano silenciosamente
     try {
       const { data, error } = await supabase
         .from('siigo_sync_logs')
@@ -58,11 +72,18 @@ export default function ImportarPage() {
 
       if (!error && data && data.length > 0) {
         setSyncLogs(data);
-      } else {
-        setSyncLogs(getMockSyncLogs());
+        setCachedSyncLogs(data);
+      } else if (!cachedLogs) {
+        const mock = getMockSyncLogs();
+        setSyncLogs(mock);
+        setCachedSyncLogs(mock);
       }
     } catch {
-      setSyncLogs(getMockSyncLogs());
+      if (!cachedLogs) {
+        const mock = getMockSyncLogs();
+        setSyncLogs(mock);
+        setCachedSyncLogs(mock);
+      }
     } finally {
       setLoadingLogs(false);
     }
@@ -129,6 +150,7 @@ export default function ImportarPage() {
           success: true,
           stats: resData.stats,
         });
+        clearAllFlujoCajaCache(); // Invalida todas las proyecciones y facturas anteriores tras sincro
         fetchLogs();
       } else {
         setSyncResult({
@@ -159,6 +181,7 @@ export default function ImportarPage() {
         `✅ Archivo "${selectedFile.name}" procesado exitosamente. Se importaron 42 registros en las tablas de facturas y saldos.`
       );
       setSelectedFile(null);
+      clearAllFlujoCajaCache();
     } catch (e: unknown) {
       setExcelResult(`❌ Error procesando el archivo Excel: ${(e as Error).message}`);
     } finally {

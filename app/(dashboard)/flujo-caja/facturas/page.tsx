@@ -5,6 +5,13 @@ import type { FacturaConCliente, Cliente, EstadoFactura } from '@/types/flujo_ca
 import { formatCOP, formatFechaEsp } from '@/lib/format';
 import { supabase } from '@/lib/supabaseClient';
 import FlujoCajaSubNav from '@/components/flujo-caja/FlujoCajaSubNav';
+import {
+  getCachedFacturas,
+  setCachedFacturas,
+  getCachedClientes,
+  setCachedClientes,
+  clearProyeccionesCache,
+} from '@/lib/flujoCajaCache';
 import { Button } from '@/components/ui/button';
 import {
   Receipt,
@@ -49,11 +56,24 @@ export default function FacturasPage() {
   }, []);
 
   async function fetchFacturas() {
-    setLoading(true);
+    // 1. Cargar instantáneamente desde la caché si existe (0 ms wait)
+    const cachedFacturas = getCachedFacturas();
+    const cachedClientes = getCachedClientes();
+
+    if (cachedFacturas && cachedFacturas.length > 0) {
+      setFacturas(cachedFacturas);
+      if (cachedClientes) setClientes(cachedClientes);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    // 2. Revalidar en segundo plano silenciosamente
     try {
       const { data: clientesData } = await supabase.from('clientes').select('*');
       if (clientesData && clientesData.length > 0) {
         setClientes(clientesData);
+        setCachedClientes(clientesData);
       }
 
       const { data: facturasData, error } = await supabase
@@ -66,7 +86,11 @@ export default function FacturasPage() {
         .order('fecha_vencimiento', { ascending: true });
 
       if (error || !facturasData || facturasData.length === 0) {
-        setFacturas(getMockFacturas());
+        if (!cachedFacturas) {
+          const mock = getMockFacturas();
+          setFacturas(mock);
+          setCachedFacturas(mock);
+        }
       } else {
         const facturasProcesadas: FacturaConCliente[] = facturasData.map((f: Record<string, unknown>) => {
           const recaudos = (f.recaudos as Record<string, unknown>[]) || [];
@@ -82,9 +106,14 @@ export default function FacturasPage() {
           };
         });
         setFacturas(facturasProcesadas);
+        setCachedFacturas(facturasProcesadas);
       }
     } catch {
-      setFacturas(getMockFacturas());
+      if (!cachedFacturas) {
+        const mock = getMockFacturas();
+        setFacturas(mock);
+        setCachedFacturas(mock);
+      }
     } finally {
       setLoading(false);
     }
@@ -209,6 +238,8 @@ export default function FacturasPage() {
         .select(`*, cliente:clientes(nombre)`)
         .single();
 
+      let facturasActualizadas: FacturaConCliente[] = [];
+
       if (error) {
         console.warn('Fallback agregando a estado local:', error.message);
         const mockNew: FacturaConCliente = {
@@ -225,10 +256,14 @@ export default function FacturasPage() {
           total_recaudado: 0,
           saldo_pendiente: payload.valor,
         };
-        setFacturas([mockNew, ...facturas]);
+        facturasActualizadas = [mockNew, ...facturas];
       } else if (factCreated) {
-        setFacturas([{ ...factCreated, total_recaudado: 0, saldo_pendiente: valorNum }, ...facturas]);
+        facturasActualizadas = [{ ...factCreated, total_recaudado: 0, saldo_pendiente: valorNum }, ...facturas];
       }
+
+      setFacturas(facturasActualizadas);
+      setCachedFacturas(facturasActualizadas);
+      clearProyeccionesCache(); // Involucra cambios en proyecciones semanales
 
       setShowCreateModal(false);
       setNewFactura({
@@ -274,19 +309,21 @@ export default function FacturasPage() {
         .update({ estado: nuevoEstado })
         .eq('id', selectedFactura.id);
 
-      setFacturas(
-        facturas.map((f) => {
-          if (f.id === selectedFactura.id) {
-            return {
-              ...f,
-              estado: nuevoEstado,
-              total_recaudado: nuevoTotalRecaudado,
-              saldo_pendiente: nuevoSaldoPendiente,
-            };
-          }
-          return f;
-        })
-      );
+      const facturasActualizadas = facturas.map((f) => {
+        if (f.id === selectedFactura.id) {
+          return {
+            ...f,
+            estado: nuevoEstado,
+            total_recaudado: nuevoTotalRecaudado,
+            saldo_pendiente: nuevoSaldoPendiente,
+          };
+        }
+        return f;
+      });
+
+      setFacturas(facturasActualizadas);
+      setCachedFacturas(facturasActualizadas);
+      clearProyeccionesCache(); // Involucra cambios en proyecciones semanales
 
       setShowRecaudoModal(false);
       setSelectedFactura(null);
