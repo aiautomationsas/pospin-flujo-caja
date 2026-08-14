@@ -79,44 +79,69 @@ ALTER TABLE pagos_obligaciones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE snapshots_proyeccion ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies: Authenticated users can read all
+DROP POLICY IF EXISTS "Authenticated users can read all" ON cuentas_bancarias;
 CREATE POLICY "Authenticated users can read all" ON cuentas_bancarias FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Authenticated users can read all" ON egresos_recurrentes;
 CREATE POLICY "Authenticated users can read all" ON egresos_recurrentes FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Authenticated users can read all" ON obligaciones;
 CREATE POLICY "Authenticated users can read all" ON obligaciones FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Authenticated users can read all" ON pagos_obligaciones;
 CREATE POLICY "Authenticated users can read all" ON pagos_obligaciones FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Authenticated users can read all" ON snapshots_proyeccion;
 CREATE POLICY "Authenticated users can read all" ON snapshots_proyeccion FOR SELECT TO authenticated USING (true);
 
 -- RLS Write Policies: Admin + Editor
+DROP POLICY IF EXISTS "Admin+Editor can insert" ON cuentas_bancarias;
 CREATE POLICY "Admin+Editor can insert" ON cuentas_bancarias FOR INSERT TO authenticated WITH CHECK (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can update" ON cuentas_bancarias;
 CREATE POLICY "Admin+Editor can update" ON cuentas_bancarias FOR UPDATE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can delete" ON cuentas_bancarias;
 CREATE POLICY "Admin+Editor can delete" ON cuentas_bancarias FOR DELETE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
 
+DROP POLICY IF EXISTS "Admin+Editor can insert" ON egresos_recurrentes;
 CREATE POLICY "Admin+Editor can insert" ON egresos_recurrentes FOR INSERT TO authenticated WITH CHECK (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can update" ON egresos_recurrentes;
 CREATE POLICY "Admin+Editor can update" ON egresos_recurrentes FOR UPDATE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can delete" ON egresos_recurrentes;
 CREATE POLICY "Admin+Editor can delete" ON egresos_recurrentes FOR DELETE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
 
+DROP POLICY IF EXISTS "Admin+Editor can insert" ON obligaciones;
 CREATE POLICY "Admin+Editor can insert" ON obligaciones FOR INSERT TO authenticated WITH CHECK (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can update" ON obligaciones;
 CREATE POLICY "Admin+Editor can update" ON obligaciones FOR UPDATE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can delete" ON obligaciones;
 CREATE POLICY "Admin+Editor can delete" ON obligaciones FOR DELETE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
 
+DROP POLICY IF EXISTS "Admin+Editor can insert" ON pagos_obligaciones;
 CREATE POLICY "Admin+Editor can insert" ON pagos_obligaciones FOR INSERT TO authenticated WITH CHECK (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can update" ON pagos_obligaciones;
 CREATE POLICY "Admin+Editor can update" ON pagos_obligaciones FOR UPDATE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can delete" ON pagos_obligaciones;
 CREATE POLICY "Admin+Editor can delete" ON pagos_obligaciones FOR DELETE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
 
+DROP POLICY IF EXISTS "Admin+Editor can insert" ON snapshots_proyeccion;
 CREATE POLICY "Admin+Editor can insert" ON snapshots_proyeccion FOR INSERT TO authenticated WITH CHECK (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can update" ON snapshots_proyeccion;
 CREATE POLICY "Admin+Editor can update" ON snapshots_proyeccion FOR UPDATE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+DROP POLICY IF EXISTS "Admin+Editor can delete" ON snapshots_proyeccion;
 CREATE POLICY "Admin+Editor can delete" ON snapshots_proyeccion FOR DELETE TO authenticated USING (
     (SELECT role FROM user_profiles WHERE id = auth.uid()) IN ('admin', 'editor'));
+
