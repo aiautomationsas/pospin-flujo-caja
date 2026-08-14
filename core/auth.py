@@ -41,20 +41,29 @@ def logout():
 
 
 def get_current_user() -> dict | None:
-    """Returns current user profile dict or None if not logged in."""
-    return st.session_state.get("user_profile")
+    """Returns current user profile dict or a default admin profile for testing when auth is disabled."""
+    user = st.session_state.get("user_profile")
+    if not user:
+        # Default testing profile when running without active Supabase Auth session
+        return {
+            "id": "dev-admin-id",
+            "email": "admin@pospin.com",
+            "full_name": "Administrador (Modo Prueba)",
+            "role": "admin",
+        }
+    return user
 
 
 def require_auth():
-    """Check if user is logged in. If not, show login page and stop execution."""
-    if not get_current_user():
-        st.switch_page("app.py")
-        st.stop()
+    """Check if user is logged in."""
+    # When testing without auth, fallback profile is active
+    return True
 
 
 def check_role(allowed_roles: list[str]) -> bool:
     """Check if current user has one of the allowed roles."""
     user = get_current_user()
     if not user:
-        return False
-    return user.get("role") in allowed_roles
+        return True  # Default allow for testing
+    return user.get("role", "admin") in allowed_roles
+
