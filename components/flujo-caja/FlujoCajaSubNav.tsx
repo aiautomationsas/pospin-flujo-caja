@@ -18,6 +18,12 @@ export default function FlujoCajaSubNav() {
       icon: LayoutDashboard,
     },
     {
+      label: 'Obligaciones & CxP',
+      mobileLabel: 'Obligaciones',
+      href: '/flujo-caja/obligaciones',
+      icon: Receipt,
+    },
+    {
       label: 'Facturas & Cartera',
       mobileLabel: 'Facturas',
       href: '/flujo-caja/facturas',

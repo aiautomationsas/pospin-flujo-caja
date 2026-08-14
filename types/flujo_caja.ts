@@ -124,6 +124,37 @@ export interface Compromiso {
   created_at: string;
 }
 
+export type PrioridadObligacion = 'alta' | 'media' | 'baja';
+export type EstadoObligacion = 'pendiente' | 'parcial' | 'pagada' | 'vencida' | 'reprogramada';
+export type FrecuenciaObligacion = 'unica' | 'semanal' | 'quincenal' | 'mensual' | 'semestral' | 'anual';
+
+export interface Obligacion {
+  id: number;
+  tercero: string;
+  categoria_id?: number | null;
+  concepto: string;
+  monto_total: number;
+  saldo_pendiente: number;
+  fecha_vencimiento: string; // ISO Date YYYY-MM-DD
+  fecha_programada_pago: string; // ISO Date YYYY-MM-DD
+  frecuencia: FrecuenciaObligacion;
+  prioridad: PrioridadObligacion;
+  estado: EstadoObligacion;
+  cuenta_origen_id?: number | null;
+  created_at?: string;
+}
+
+export interface PagoObligacion {
+  id: number;
+  obligacion_id: number;
+  cuenta_id: number;
+  semana_id?: number | null;
+  monto_pagado: number;
+  fecha_pago: string;
+  comprobante_ref?: string | null;
+  created_at?: string;
+}
+
 export interface SnapshotProyeccion {
   id: number;
   semana_id: number;
