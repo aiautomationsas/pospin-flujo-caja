@@ -26,6 +26,7 @@ export async function POST(request: Request) {
   const baseUrl = (body.base_url as string) || process.env.SIIGO_BASE_URL || 'https://api.siigo.com';
   const usuarioId = (body.usuario_id as string) || null;
   const isTestOnly = Boolean(body.testOnly);
+  const isDebug = Boolean(body.debug);
 
   if (!username || !accessKey) {
     return NextResponse.json(
@@ -37,24 +38,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const ACTIVE_SUPABASE_URL = 'https://pviqnnehvbmpiysjpxjh.supabase.co';
-  const ACTIVE_SUPABASE_ANON_KEY =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2aXFubmVodmJtcGl5c2pweGpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzODc1MTgsImV4cCI6MjA5Nzk2MzUxOH0.ATk6XmopgNs4qvCWJHFhE7oeWomVtUwbv3ZeywwQnWk';
-
-  const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
-  const supabaseUrl = (!rawUrl || rawUrl.includes('xiimvwjmblnxrxfrbzee'))
-    ? ACTIVE_SUPABASE_URL
-    : rawUrl;
-
-  const rawKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    '';
-  const supabaseKey = (!rawKey || rawKey.includes('xiimvwjmblnxrxfrbzee'))
-    ? ACTIVE_SUPABASE_ANON_KEY
-    : rawKey;
-
   const siigoClient = new SiigoAPIClient({
     username,
     access_key: accessKey,
@@ -62,7 +45,22 @@ export async function POST(request: Request) {
     base_url: baseUrl,
   });
 
-  // Si es solo prueba de conexión (Ping Auth API)
+  if (isDebug) {
+    try {
+      const facturas = await siigoClient.consultarFacturasVenta(30);
+      const cuentasPagar = await siigoClient.consultarCuentasPorPagar().catch(() => []);
+      return NextResponse.json({
+        success: true,
+        sample_invoice: facturas[0] || null,
+        sample_keys: facturas[0] ? Object.keys(facturas[0]) : [],
+        sample_cuentas_pagar: cuentasPagar[0] || null,
+        total_invoices_sample: facturas.length,
+      });
+    } catch (err) {
+      return NextResponse.json({ success: false, error: (err as Error).message }, { status: 500 });
+    }
+  }
+
   if (isTestOnly) {
     try {
       await siigoClient.obtenerToken();
@@ -85,7 +83,24 @@ export async function POST(request: Request) {
     }
   }
 
-  // Creación del cliente Supabase para sincronización completa
+  const ACTIVE_SUPABASE_URL = 'https://pviqnnehvbmpiysjpxjh.supabase.co';
+  const ACTIVE_SUPABASE_ANON_KEY =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2aXFubmVodmJtcGl5c2pweGpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzODc1MTgsImV4cCI6MjA5Nzk2MzUxOH0.ATk6XmopgNs4qvCWJHFhE7oeWomVtUwbv3ZeywwQnWk';
+
+  const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const supabaseUrl = (!rawUrl || rawUrl.includes('xiimvwjmblnxrxfrbzee'))
+    ? ACTIVE_SUPABASE_URL
+    : rawUrl;
+
+  const rawKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    '';
+  const supabaseKey = (!rawKey || rawKey.includes('xiimvwjmblnxrxfrbzee'))
+    ? ACTIVE_SUPABASE_ANON_KEY
+    : rawKey;
+
   let supabase = null;
   if (supabaseUrl && supabaseKey) {
     try {
@@ -139,7 +154,6 @@ export async function POST(request: Request) {
     const errorMessage = (error as Error).message || String(error);
     console.error('Error en Route Handler /api/siigo/sync:', errorMessage);
 
-    // Registrar log de error en Supabase si está disponible
     if (supabase) {
       try {
         await supabase.from('siigo_sync_logs').insert({
