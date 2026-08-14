@@ -92,6 +92,48 @@ export class SiigoAPIClient {
   }
 
   /**
+   * Consulta detalle de una factura específica por su UUID en SIIGO.
+   */
+  public async consultarFacturaPorId(id: string): Promise<Record<string, unknown> | null> {
+    const url = `${this.baseUrl}/v1/invoices/${id}`;
+    const headers = await this.getHeaders();
+    try {
+      const res = await fetch(url, { method: 'GET', headers });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Consulta el informe oficial de Cuentas por Cobrar (Cartera Vigente) en SIIGO.
+   */
+  public async consultarCuentasPorCobrar(): Promise<Record<string, unknown>[]> {
+    const url = `${this.baseUrl}/v1/accounts-receivable`;
+    const headers = await this.getHeaders();
+    const cuentas: Record<string, unknown>[] = [];
+    let page = 1;
+
+    try {
+      while (true) {
+        const res = await fetch(`${url}?page_size=100&page=${page}`, { method: 'GET', headers });
+        if (!res.ok) break;
+        const data = await res.json();
+        const results = data.results || [];
+        if (results.length === 0) break;
+        cuentas.push(...results);
+        const total = data.pagination?.total_results || 0;
+        if (cuentas.length >= total || page >= 50) break;
+        page++;
+      }
+      return cuentas;
+    } catch {
+      return cuentas;
+    }
+  }
+
+  /**
    * Consulta detalles de un cliente en SIIGO por NIT o ID para obtener la Razón Social real.
    */
   public async obtenerNombreClienteReal(nitOrId: string): Promise<string | null> {
@@ -322,7 +364,7 @@ function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string
 
 /**
  * Sincroniza facturas y clientes desde SIIGO a Supabase en lote ultra-optimizado.
- * Extrae correctamente `balance` y `payments[0].due_date` desde el payload oficial de SIIGO API v1.
+ * Extrae correctamente `balance` y `payments[].due_date` aplicando la regla oficial de SIIGO API.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
@@ -445,30 +487,40 @@ export async function sincronizarCarteraSiigo(
         balance = Number((fSiigo.due as unknown as Record<string, unknown>).balance);
       }
 
-      // Extraer fecha de vencimiento real desde la lista de pagos/cuotas (payments[0].due_date)
+      // Extraer fechas de vencimiento desde el arreglo payments
       const fechaEmision = fSiigo.date;
+      const payments = Array.isArray(fSiigo.payments) ? (fSiigo.payments as Array<Record<string, unknown>>) : [];
       let fechaVencimiento = fechaEmision;
-      if (Array.isArray(fSiigo.payments) && fSiigo.payments.length > 0) {
-        const p0 = fSiigo.payments[0] as Record<string, unknown>;
-        if (p0 && typeof p0.due_date === 'string' && p0.due_date.trim()) {
-          fechaVencimiento = p0.due_date.trim();
+
+      if (payments.length > 0) {
+        const firstPaymentWithDate = payments.find((p) => p && typeof p.due_date === 'string' && p.due_date.trim());
+        if (firstPaymentWithDate && typeof firstPaymentWithDate.due_date === 'string') {
+          fechaVencimiento = firstPaymentWithDate.due_date.trim();
         }
       } else if (fSiigo.due && typeof (fSiigo.due as unknown as Record<string, unknown>).date === 'string') {
         fechaVencimiento = String((fSiigo.due as unknown as Record<string, unknown>).date);
       }
 
-      // Determinar estado contable de la factura
+      // REGLA OFICIAL DE SIIGO:
+      // 1. Pagada: balance === 0
+      // 2. Vencida: balance > 0 Y al menos un vencimiento (payments[].due_date) es < hoy
+      // 3. Pendiente: balance > 0 Y vencimiento >= hoy
       let estado: 'pagada' | 'parcial' | 'vencida' | 'pendiente';
       if (balance <= 0) {
         estado = 'pagada';
       } else if (balance < valor) {
-        estado = 'parcial';
+        // Pago parcial registrado
+        const tieneVencimientoPasado = payments.some(
+          (p) => p && typeof p.due_date === 'string' && p.due_date.trim() < hoyStr
+        );
+        estado = tieneVencimientoPasado ? 'vencida' : 'parcial';
       } else {
-        if (fechaVencimiento < hoyStr) {
-          estado = 'vencida';
-        } else {
-          estado = 'pendiente';
-        }
+        // Sin pagos (balance === valor)
+        const tieneVencimientoPasado = payments.length > 0
+          ? payments.some((p) => p && typeof p.due_date === 'string' && p.due_date.trim() < hoyStr)
+          : fechaVencimiento < hoyStr;
+
+        estado = tieneVencimientoPasado ? 'vencida' : 'pendiente';
       }
 
       if (stats.facturas_detalle) {
