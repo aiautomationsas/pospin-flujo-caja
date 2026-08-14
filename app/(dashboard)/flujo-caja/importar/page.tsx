@@ -32,6 +32,7 @@ export default function ImportarPage() {
   });
 
   const [diasAtras, setDiasAtras] = useState<number>(365); // 1 año por defecto
+  const [resetData, setResetData] = useState<boolean>(true); // Limpiar datos demo por defecto para carga limpia
   const [showAdvancedCredentials, setShowAdvancedCredentials] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [testingApi, setTestingApi] = useState(false);
@@ -184,13 +185,16 @@ export default function ImportarPage() {
     }
   }
 
-  async function handleSyncSiigo(e?: React.FormEvent) {
+  async function handleSyncSiigo(e?: React.FormEvent, forceReset?: boolean) {
     if (e) e.preventDefault();
     setSyncStats(null);
     setSyncing(true);
 
+    const shouldReset = forceReset !== undefined ? forceReset : resetData;
+
     const payload: Record<string, unknown> = {
       dias_atras: diasAtras,
+      resetData: shouldReset,
     };
     if (credentials.username.trim()) payload.username = credentials.username.trim();
     if (credentials.access_key.trim()) payload.access_key = credentials.access_key.trim();
@@ -312,24 +316,33 @@ export default function ImportarPage() {
                 </span>
               </div>
 
-              {/* Selección de Rango de Fechas */}
-              <div className="mb-4 bg-muted/60 p-3 rounded-xl border border-border">
-                <label className="block text-xs font-semibold text-foreground mb-1 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-secondary" /> Período de Consulta de Facturas:
+              {/* Selección de Rango de Fechas y Opción de Limpieza */}
+              <div className="mb-4 bg-muted/60 p-3 rounded-xl border border-border space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1 flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-secondary" /> Período de Consulta de Facturas:
+                  </label>
+                  <select
+                    value={diasAtras}
+                    onChange={(e) => setDiasAtras(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value={90}>Últimos 90 días (3 Meses)</option>
+                    <option value={180}>Últimos 180 días (6 Meses)</option>
+                    <option value={365}>Últimos 365 días (1 Año - Recomendado)</option>
+                    <option value={730}>Últimos 730 días (2 Años - Completo)</option>
+                  </select>
+                </div>
+
+                <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer pt-1 border-t border-border/60">
+                  <input
+                    type="checkbox"
+                    checked={resetData}
+                    onChange={(e) => setResetData(e.target.checked)}
+                    className="w-4 h-4 rounded text-primary focus:ring-primary accent-primary"
+                  />
+                  <span>Limpiar facturas anteriores/demo antes de guardar datos reales de SIIGO</span>
                 </label>
-                <select
-                  value={diasAtras}
-                  onChange={(e) => setDiasAtras(Number(e.target.value))}
-                  className="w-full px-3 py-1.5 bg-background border border-border rounded-lg text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value={90}>Últimos 90 días (3 Meses)</option>
-                  <option value={180}>Últimos 180 días (6 Meses)</option>
-                  <option value={365}>Últimos 365 días (1 Año - Recomendado)</option>
-                  <option value={730}>Últimos 730 días (2 Años - Completo)</option>
-                </select>
-                <span className="text-[11px] text-muted-foreground mt-1 block">
-                  Captura facturas vigentes, cobradas y pendientes en el período seleccionado.
-                </span>
               </div>
 
               {apiTestMsg && (

@@ -99,6 +99,15 @@ export async function POST(request: Request) {
       throw new Error('No se pudo conectar con la base de datos Supabase.');
     }
 
+    if (Boolean(body.resetData) || Boolean(body.reset_data)) {
+      try {
+        await supabase.from('recaudos').delete().neq('id', 0);
+        await supabase.from('facturas').delete().neq('id', 0);
+      } catch (resetErr) {
+        console.warn('Error purgando datos anteriores:', resetErr);
+      }
+    }
+
     const diasAtras = Number(body.dias_atras) || 365;
     const stats = await sincronizarCarteraSiigo(supabase, siigoClient, diasAtras);
 
