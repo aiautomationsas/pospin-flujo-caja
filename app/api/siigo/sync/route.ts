@@ -10,45 +10,34 @@ export async function POST(request: Request) {
       body = JSON.parse(text);
     }
   } catch {
-    // Body is optional or empty
+    // Body opcional
   }
 
-  const username = (body.username as string) || process.env.SIIGO_USERNAME;
-  const accessKey = (body.access_key as string) || process.env.SIIGO_ACCESS_KEY;
-  const partnerId = (body.partner_id as string) || process.env.SIIGO_PARTNER_ID;
-  const baseUrl = (body.base_url as string) || process.env.SIIGO_BASE_URL;
+  const username = (body.username as string) || process.env.SIIGO_USERNAME || '';
+  const accessKey = (body.access_key as string) || process.env.SIIGO_ACCESS_KEY || '';
+  const partnerId = (body.partner_id as string) || process.env.SIIGO_PARTNER_ID || 'pospin_flujo_caja';
+  const baseUrl = (body.base_url as string) || process.env.SIIGO_BASE_URL || 'https://api.siigo.com';
   const usuarioId = (body.usuario_id as string) || null;
+  const isTestOnly = Boolean(body.testOnly);
 
-  if (!username || !accessKey || !partnerId) {
+  if (!username || !accessKey) {
     return NextResponse.json(
       {
         success: false,
-        error:
-          'Faltan credenciales de SIIGO (username, access_key, partner_id son requeridos)',
+        error: 'Faltan credenciales de SIIGO (Se requiere Usuario y Access Key válidos).',
       },
       { status: 400 }
     );
   }
 
   const supabaseUrl =
-    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || 'https://pviqnnehvbmpiysjpxjh.supabase.co';
   const supabaseKey =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.SUPABASE_ANON_KEY ||
     '';
 
-  if (!supabaseUrl || !supabaseKey) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Configuración de Supabase no encontrada en variables de entorno',
-      },
-      { status: 500 }
-    );
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseKey);
   const siigoClient = new SiigoAPIClient({
     username,
     access_key: accessKey,
@@ -56,19 +45,60 @@ export async function POST(request: Request) {
     base_url: baseUrl,
   });
 
+  // Si es solo prueba de conexión (Ping Auth API)
+  if (isTestOnly) {
+    try {
+      await siigoClient.obtenerToken();
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'Autenticación con SIIGO API exitosa.',
+        },
+        { status: 200 }
+      );
+    } catch (authErr: unknown) {
+      const authMsg = (authErr as Error).message || String(authErr);
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Error de autenticación con SIIGO: ${authMsg}`,
+        },
+        { status: 401 }
+      );
+    }
+  }
+
+  // Creación del cliente Supabase para sincronización completa
+  let supabase = null;
+  if (supabaseUrl && supabaseKey) {
+    try {
+      supabase = createClient(supabaseUrl, supabaseKey);
+    } catch {
+      // Ignorar error de cliente Supabase si las variables están caídas
+    }
+  }
+
   try {
+    if (!supabase) {
+      throw new Error('No se pudo conectar con la base de datos Supabase.');
+    }
+
     const stats = await sincronizarCarteraSiigo(supabase, siigoClient);
 
     // Registrar log de sincronización exitosa
-    await supabase.from('siigo_sync_logs').insert({
-      fecha: new Date().toISOString(),
-      clientes_creados: stats.clientes_creados,
-      facturas_creadas: stats.facturas_creadas,
-      facturas_actualizadas: stats.facturas_actualizadas,
-      exitosa: true,
-      error_message: null,
-      usuario_id: usuarioId,
-    });
+    try {
+      await supabase.from('siigo_sync_logs').insert({
+        fecha: new Date().toISOString(),
+        clientes_creados: stats.clientes_creados,
+        facturas_creadas: stats.facturas_creadas,
+        facturas_actualizadas: stats.facturas_actualizadas,
+        exitosa: true,
+        error_message: null,
+        usuario_id: usuarioId,
+      });
+    } catch (logErr) {
+      console.warn('No se pudo guardar log exitoso en Supabase:', logErr);
+    }
 
     return NextResponse.json(
       {
@@ -81,19 +111,21 @@ export async function POST(request: Request) {
     const errorMessage = (error as Error).message || String(error);
     console.error('Error en Route Handler /api/siigo/sync:', errorMessage);
 
-    // Intentar registrar log de error en Supabase
-    try {
-      await supabase.from('siigo_sync_logs').insert({
-        fecha: new Date().toISOString(),
-        clientes_creados: 0,
-        facturas_creadas: 0,
-        facturas_actualizadas: 0,
-        exitosa: false,
-        error_message: errorMessage,
-        usuario_id: usuarioId,
-      });
-    } catch (logErr) {
-      console.error('Error guardando log de fallo en Supabase:', logErr);
+    // Registrar log de error en Supabase si está disponible
+    if (supabase) {
+      try {
+        await supabase.from('siigo_sync_logs').insert({
+          fecha: new Date().toISOString(),
+          clientes_creados: 0,
+          facturas_creadas: 0,
+          facturas_actualizadas: 0,
+          exitosa: false,
+          error_message: errorMessage,
+          usuario_id: usuarioId,
+        });
+      } catch (logErr) {
+        console.warn('No se pudo registrar log de error en Supabase:', logErr);
+      }
     }
 
     return NextResponse.json(
@@ -101,7 +133,7 @@ export async function POST(request: Request) {
         success: false,
         error: errorMessage,
       },
-      { status: 500 }
+      { status: 400 }
     );
   }
 }
