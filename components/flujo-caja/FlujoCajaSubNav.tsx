@@ -61,7 +61,7 @@ export default function FlujoCajaSubNav() {
                 const isActive =
                   item.href === '/flujo-caja'
                     ? pathname === '/flujo-caja'
-                    : pathname.startsWith(item.href);
+                    : Boolean(pathname?.startsWith(item.href));
 
                 return (
                   <Link
