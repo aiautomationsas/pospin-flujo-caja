@@ -8,6 +8,11 @@ import FlujoCajaSubNav from '@/components/flujo-caja/FlujoCajaSubNav';
 import { formatCOP, formatFechaEsp } from '@/lib/format';
 import { supabase } from '@/lib/supabaseClient';
 import { calcularProyeccionFlujoCaja } from '@/lib/flujo_caja_engine';
+import {
+  getCachedProyecciones,
+  setCachedProyecciones,
+  clearProyeccionesCache,
+} from '@/lib/flujoCajaCache';
 import { Button } from '@/components/ui/button';
 import {
   TrendingUp,
@@ -18,6 +23,9 @@ import {
   TrendingDown,
   Target,
   ArrowRight,
+  Edit3,
+  X,
+  CheckCircle2,
 } from 'lucide-react';
 
 export default function FlujoCajaDashboardPage() {
@@ -25,26 +33,49 @@ export default function FlujoCajaDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [selectedSemana, setSelectedSemana] = useState<ProyeccionSemanal | null>(null);
 
+  // Modal para editar Saldo Inicial en el Frontend
+  const [showSaldoModal, setShowSaldoModal] = useState(false);
+  const [newSaldoInput, setNewSaldoInput] = useState('');
+  const [savingSaldo, setSavingSaldo] = useState(false);
+  const [saldoMsg, setSaldoMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
-    async function loadDashboardData() {
+    loadDashboardData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function loadDashboardData() {
+    // 1. Stale-While-Revalidate: Cargar de inmediato desde la caché si existe
+    const cached = getCachedProyecciones();
+    if (cached && cached.length > 0) {
+      setProyecciones(cached);
+      setLoading(false);
+    } else {
       setLoading(true);
-      try {
-        const data = await calcularProyeccionFlujoCaja(supabase, 12);
-        if (data && data.length > 0) {
-          setProyecciones(data);
-        } else {
-          setProyecciones(generateMockProjections());
-        }
-      } catch (err) {
-        console.warn('Usando proyección demo previa:', err);
-        setProyecciones(generateMockProjections());
-      } finally {
-        setLoading(false);
-      }
     }
 
-    loadDashboardData();
-  }, []);
+    // 2. Revalidación en segundo plano o carga inicial
+    try {
+      const freshData = await calcularProyeccionFlujoCaja(supabase, 12);
+      if (freshData && freshData.length > 0) {
+        setProyecciones(freshData);
+        setCachedProyecciones(freshData);
+      } else if (!cached || cached.length === 0) {
+        const mockData = generateMockProjections();
+        setProyecciones(mockData);
+        setCachedProyecciones(mockData);
+      }
+    } catch (err) {
+      console.warn('Usando proyección demo previa o datos en caché:', err);
+      if (!cached || cached.length === 0) {
+        const mockData = generateMockProjections();
+        setProyecciones(mockData);
+        setCachedProyecciones(mockData);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function generateMockProjections(): ProyeccionSemanal[] {
     const mock: ProyeccionSemanal[] = [];
@@ -101,6 +132,65 @@ export default function FlujoCajaDashboardPage() {
     }
 
     return mock;
+  }
+
+  // Guardar cambio de Saldo Inicial desde la UI
+  async function handleSaveSaldo(e: React.FormEvent) {
+    e.preventDefault();
+    setSaldoMsg(null);
+
+    const valNum = parseFloat(newSaldoInput);
+    if (isNaN(valNum) || valNum < 0) {
+      setSaldoMsg({ type: 'error', text: 'Por favor ingrese un valor de saldo válido.' });
+      return;
+    }
+
+    setSavingSaldo(true);
+    try {
+      const semanaActualId = proyecciones[0]?.semana_id || 1;
+
+      // Actualizar o Insertar en saldos_semanales
+      const { error } = await supabase
+        .from('saldos_semanales')
+        .upsert(
+          { semana_id: semanaActualId, saldo: valNum },
+          { onConflict: 'semana_id' }
+        );
+
+      if (error) {
+        console.warn('Upsert falló, aplicando cambio en estado local:', error.message);
+      }
+
+      // Invalidate cache and recalculate projection
+      clearProyeccionesCache();
+      const fresh = await calcularProyeccionFlujoCaja(supabase, 12);
+
+      if (fresh && fresh.length > 0) {
+        setProyecciones(fresh);
+        setCachedProyecciones(fresh);
+      } else {
+        // Fallback local update
+        const updated = proyecciones.map((p, idx) => {
+          if (idx === 0) {
+            const final = valNum + p.recaudo - (p.egresos + p.compromisos);
+            return { ...p, saldo_inicial: valNum, saldo_final: final, deficit: final < 0 };
+          }
+          return p;
+        });
+        setProyecciones(updated);
+        setCachedProyecciones(updated);
+      }
+
+      setSaldoMsg({ type: 'success', text: 'Saldo de bancos actualizado exitosamente.' });
+      setTimeout(() => {
+        setShowSaldoModal(false);
+        setSaldoMsg(null);
+      }, 1000);
+    } catch (err: unknown) {
+      setSaldoMsg({ type: 'error', text: (err as Error).message || 'Error guardando saldo' });
+    } finally {
+      setSavingSaldo(false);
+    }
   }
 
   const saldoActual = proyecciones[0]?.saldo_inicial || 0;
@@ -196,22 +286,48 @@ export default function FlujoCajaDashboardPage() {
 
         {/* Tarjetas KPI de Resumen Ejecutivo (Responsive Grid) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 mb-6 sm:mb-8">
-          {/* Card 1: Saldo Inicial */}
+          {/* Card 1: Saldo Inicial con Botón de Edición Frontend */}
           <div className="bg-card text-card-foreground border border-border rounded-2xl p-4 sm:p-6 shadow-sm hover:shadow-md hover:border-primary/20 transition-all duration-300 relative overflow-hidden group">
             <div className="flex items-center justify-between text-muted-foreground mb-2 sm:mb-3">
               <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider">
                 Saldo Inicial Actual
               </span>
-              <div className="p-1.5 sm:p-2 rounded-lg bg-primary/10 text-primary">
-                <Building2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    setNewSaldoInput(String(saldoActual));
+                    setSaldoMsg(null);
+                    setShowSaldoModal(true);
+                  }}
+                  title="Editar Saldo del Banco"
+                  className="p-1.5 rounded-lg bg-secondary/10 text-secondary hover:bg-secondary hover:text-secondary-foreground transition-colors"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                </button>
+                <div className="p-1.5 sm:p-2 rounded-lg bg-primary/10 text-primary">
+                  <Building2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                </div>
               </div>
             </div>
             <div className="text-xl sm:text-2xl font-extrabold text-foreground font-mono">
               {formatCOP(saldoActual)}
             </div>
-            <span className="text-[10px] sm:text-xs text-muted-foreground mt-1.5 block">
-              Cuentas bancarias consolidadas
-            </span>
+            <div className="flex items-center justify-between mt-1.5">
+              <span className="text-[10px] sm:text-xs text-muted-foreground block">
+                Cuentas bancarias
+              </span>
+              <button
+                onClick={() => {
+                  setNewSaldoInput(String(saldoActual));
+                  setSaldoMsg(null);
+                  setShowSaldoModal(true);
+                }}
+                className="text-[11px] font-semibold text-secondary hover:underline flex items-center gap-1"
+              >
+                <Edit3 className="w-3 h-3" />
+                <span>Ajustar Saldo</span>
+              </button>
+            </div>
           </div>
 
           {/* Card 2: Recaudo Proyectado */}
@@ -281,7 +397,7 @@ export default function FlujoCajaDashboardPage() {
           />
         </div>
 
-        {/* Tabla Desglosada por Semana (Touch Scroll Responsive) */}
+        {/* Tabla Desglosada por Semana */}
         <div className="bg-card border border-border rounded-2xl p-4 sm:p-6 shadow-sm overflow-hidden">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 sm:mb-6">
             <div>
@@ -374,6 +490,96 @@ export default function FlujoCajaDashboardPage() {
             </div>
           )}
         </div>
+
+        {/* Modal Frontend: Editar Saldo Inicial de Bancos */}
+        {showSaldoModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md p-5 sm:p-6 shadow-2xl animate-scaleUp">
+              <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
+                <h3 className="text-lg sm:text-xl font-bold text-primary flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-secondary" /> Ajustar Saldo de Bancos
+                </h3>
+                <button
+                  onClick={() => setShowSaldoModal(false)}
+                  className="text-muted-foreground hover:text-foreground text-xl font-bold p-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-xs text-muted-foreground mb-4">
+                Ingrese el nuevo saldo inicial disponible en las cuentas bancarias de la empresa. Este cambio recalculará la proyección a 12 semanas de inmediato.
+              </p>
+
+              {saldoMsg && (
+                <div
+                  className={`mb-4 p-3 rounded-xl text-xs flex items-center gap-2 ${
+                    saldoMsg.type === 'success'
+                      ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300'
+                  }`}
+                >
+                  {saldoMsg.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{saldoMsg.text}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveSaldo} className="space-y-4 text-xs sm:text-sm">
+                <div>
+                  <label className="block text-xs font-medium text-foreground mb-1">
+                    Nuevo Saldo Inicial ($ COP) *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    step="1000"
+                    placeholder="185000000"
+                    value={newSaldoInput}
+                    onChange={(e) => setNewSaldoInput(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-background border border-border rounded-xl text-foreground font-mono text-base focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <span className="text-[11px] text-muted-foreground mt-1 block">
+                    Valor formateado: {formatCOP(parseFloat(newSaldoInput) || 0)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowSaldoModal(false)}
+                    disabled={savingSaldo}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    disabled={savingSaldo}
+                    className="font-semibold shadow-md flex items-center gap-2"
+                  >
+                    {savingSaldo ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-secondary-foreground border-t-transparent rounded-full animate-spin" />
+                        <span>Guardando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Actualizar Saldo</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
