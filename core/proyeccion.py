@@ -387,3 +387,12 @@ class MotorProyeccion:
         """Retorna semanas donde el saldo_final es negativo."""
         proyeccion = self.calcular(semanas=12)
         return [p for p in proyeccion if p["deficit"]]
+
+    def obligaciones_pendientes(self) -> list[dict]:
+        """Retorna lista de obligaciones pendientes o parciales."""
+        try:
+            resp = self.client.table("obligaciones").select("*").in_("estado", ["pendiente", "parcial"]).order("fecha_programada_pago").execute()
+            return resp.data or []
+        except Exception:
+            return []
+
