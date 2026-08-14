@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import type { Obligacion, CuentaBancaria, CategoriaEgreso } from '@/types/flujo_caja';
+import type { Obligacion, CuentaBancaria } from '@/types/flujo_caja';
 import { formatCOP, formatFechaEsp } from '@/lib/format';
 import { supabase } from '@/lib/supabaseClient';
 import FlujoCajaSubNav from '@/components/flujo-caja/FlujoCajaSubNav';
@@ -13,20 +13,15 @@ import {
   DollarSign,
   X,
   Calendar,
-  Clock,
-  AlertTriangle,
-  CheckCircle2,
-  Filter,
+  Repeat,
 } from 'lucide-react';
 
 export default function ObligacionesPage() {
   const [obligaciones, setObligaciones] = useState<Obligacion[]>([]);
   const [cuentas, setCuentas] = useState<CuentaBancaria[]>([]);
-  const [categorias, setCategorias] = useState<CategoriaEgreso[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState<string>('todas');
-  const [filterPrioridad, setFilterPrioridad] = useState<string>('todas');
   const [searchTerm, setSearchTerm] = useState('');
 
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -36,12 +31,13 @@ export default function ObligacionesPage() {
 
   const [newObligacion, setNewObligacion] = useState({
     tercero: '',
-    categoria_id: '',
     concepto: '',
     monto_total: '',
     fecha_vencimiento: new Date().toISOString().split('T')[0],
     fecha_programada_pago: new Date().toISOString().split('T')[0],
     prioridad: 'media',
+    es_recurrente: false,
+    frecuencia: 'mensual',
   });
 
   const [paymentInput, setPaymentInput] = useState({
@@ -62,10 +58,14 @@ export default function ObligacionesPage() {
     setLoading(true);
     try {
       // Fetch obligaciones
-      const { data: obData } = await supabase
+      const { data: obData, error: obErr } = await supabase
         .from('obligaciones')
         .select('*')
         .order('fecha_programada_pago', { ascending: true });
+
+      if (obErr) {
+        console.warn('Supabase obligaciones fetch warning:', obErr);
+      }
 
       // Fetch cuentas bancarias
       const { data: cData } = await supabase
@@ -74,15 +74,8 @@ export default function ObligacionesPage() {
         .eq('activa', true)
         .order('nombre', { ascending: true });
 
-      // Fetch categorias
-      const { data: catData } = await supabase
-        .from('categorias_egreso')
-        .select('*')
-        .order('nombre', { ascending: true });
-
       setObligaciones(obData || []);
       setCuentas(cData || []);
-      setCategorias(catData || []);
     } catch (e) {
       console.error('Error fetching data:', e);
     } finally {
@@ -107,8 +100,12 @@ export default function ObligacionesPage() {
 
   // Filter list
   const filteredObligaciones = obligaciones.filter((item) => {
-    if (activeTab !== 'todas' && item.estado !== activeTab) return false;
-    if (filterPrioridad !== 'todas' && item.prioridad !== filterPrioridad) return false;
+    if (activeTab === 'recurrentes') {
+      if (!item.frecuencia || item.frecuencia === 'unica') return false;
+    } else if (activeTab !== 'todas' && item.estado !== activeTab) {
+      return false;
+    }
+
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       return (
@@ -118,6 +115,23 @@ export default function ObligacionesPage() {
     }
     return true;
   });
+
+  // Calculate next date for recurring obligations
+  function calculateNextDate(currentDateStr: string, frecuencia: string): string {
+    const current = new Date(currentDateStr);
+    if (isNaN(current.getTime())) return currentDateStr;
+
+    if (frecuencia === 'semanal') {
+      current.setDate(current.getDate() + 7);
+    } else if (frecuencia === 'quincenal') {
+      current.setDate(current.getDate() + 15);
+    } else if (frecuencia === 'mensual') {
+      current.setMonth(current.getMonth() + 1);
+    } else if (frecuencia === 'anual') {
+      current.setFullYear(current.getFullYear() + 1);
+    }
+    return current.toISOString().split('T')[0];
+  }
 
   // Create handler
   async function handleCreateObligacion(e: React.FormEvent) {
@@ -135,34 +149,43 @@ export default function ObligacionesPage() {
       return;
     }
 
+    const freqVal = newObligacion.es_recurrente ? newObligacion.frecuencia : 'unica';
+
     try {
       const { error } = await supabase.from('obligaciones').insert({
         tercero: newObligacion.tercero,
-        categoria_id: newObligacion.categoria_id ? parseInt(newObligacion.categoria_id) : null,
         concepto: newObligacion.concepto,
         monto_total: monto,
         saldo_pendiente: monto,
         fecha_vencimiento: newObligacion.fecha_vencimiento,
         fecha_programada_pago: newObligacion.fecha_programada_pago,
         prioridad: newObligacion.prioridad,
+        frecuencia: freqVal,
         estado: 'pendiente',
       });
 
-      if (error) throw error;
+      if (error) {
+        if (error.code === '42501' || error.message.includes('permission') || error.message.includes('policy')) {
+          throw new Error('Error de permisos en Supabase (401/42501). Ejecuta el script SQL de RLS para habilitar escrituras.');
+        }
+        throw error;
+      }
 
       setShowCreateModal(false);
       setNewObligacion({
         tercero: '',
-        categoria_id: '',
         concepto: '',
         monto_total: '',
         fecha_vencimiento: new Date().toISOString().split('T')[0],
         fecha_programada_pago: new Date().toISOString().split('T')[0],
         prioridad: 'media',
+        es_recurrente: false,
+        frecuencia: 'mensual',
       });
       fetchData();
-    } catch (err: any) {
-      setFormError(err.message || 'Error al guardar la obligación.');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Error al guardar la obligación.';
+      setFormError(errorMessage);
     }
   }
 
@@ -216,6 +239,24 @@ export default function ObligacionesPage() {
           .eq('id', cuentaId);
       }
 
+      // 4. If obligation is fully paid AND is recurring (nómina, arriendo, etc.), generate next period's obligation automatically!
+      if (nuevoSaldo <= 0 && selectedObligacion.frecuencia && selectedObligacion.frecuencia !== 'unica') {
+        const nuevaFechaVenc = calculateNextDate(selectedObligacion.fecha_vencimiento, selectedObligacion.frecuencia);
+        const nuevaFechaProg = calculateNextDate(selectedObligacion.fecha_programada_pago, selectedObligacion.frecuencia);
+
+        await supabase.from('obligaciones').insert({
+          tercero: selectedObligacion.tercero,
+          concepto: `${selectedObligacion.concepto} (Recurrente - Próximo Periodo)`,
+          monto_total: selectedObligacion.monto_total,
+          saldo_pendiente: selectedObligacion.monto_total,
+          fecha_vencimiento: nuevaFechaVenc,
+          fecha_programada_pago: nuevaFechaProg,
+          prioridad: selectedObligacion.prioridad,
+          frecuencia: selectedObligacion.frecuencia,
+          estado: 'pendiente',
+        });
+      }
+
       setShowPaymentModal(false);
       setSelectedObligacion(null);
       setPaymentInput({
@@ -225,8 +266,9 @@ export default function ObligacionesPage() {
         fecha_pago: new Date().toISOString().split('T')[0],
       });
       fetchData();
-    } catch (err: any) {
-      setFormError(err.message || 'Error al registrar el pago.');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Error al registrar el pago.';
+      setFormError(errorMessage);
     }
   }
 
@@ -247,7 +289,7 @@ export default function ObligacionesPage() {
       setShowRescheduleModal(false);
       setSelectedObligacion(null);
       fetchData();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error rescheduling:', err);
     }
   }
@@ -265,7 +307,7 @@ export default function ObligacionesPage() {
               Obligaciones & Cuentas por Pagar
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Gestión unificada de pasivos, programación de pagos y trazabilidad bancaria (SSOT).
+              Gestión de pasivos, obligaciones recurrentes (Nóminas, Arriendos) y trazabilidad bancaria.
             </p>
           </div>
 
@@ -324,7 +366,7 @@ export default function ObligacionesPage() {
         {/* Filters */}
         <div className="p-4 rounded-xl border border-border bg-card shadow-sm mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto">
-            {['todas', 'pendiente', 'parcial', 'pagada', 'vencida'].map((tab) => (
+            {['todas', 'pendiente', 'parcial', 'pagada', 'vencida', 'recurrentes'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -334,7 +376,7 @@ export default function ObligacionesPage() {
                     : 'text-muted-foreground hover:bg-accent'
                 }`}
               >
-                {tab}
+                {tab === 'recurrentes' ? '🔄 Recurrentes (Nóminas)' : tab}
               </button>
             ))}
           </div>
@@ -361,7 +403,7 @@ export default function ObligacionesPage() {
             <CreditCard className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
             <p className="font-semibold text-foreground">No hay obligaciones registradas</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Haz clic en "Nueva Obligación" para agregar una cuenta por pagar.
+              Haz clic en &quot;Nueva Obligación&quot; para agregar una cuenta por pagar.
             </p>
           </div>
         ) : (
@@ -372,6 +414,7 @@ export default function ObligacionesPage() {
                   <tr>
                     <th className="p-3">Tercero</th>
                     <th className="p-3">Concepto</th>
+                    <th className="p-3">Frecuencia</th>
                     <th className="p-3">Vencimiento</th>
                     <th className="p-3">Fecha Prog.</th>
                     <th className="p-3">Prioridad</th>
@@ -386,6 +429,15 @@ export default function ObligacionesPage() {
                     <tr key={ob.id} className="hover:bg-accent/40 transition-colors">
                       <td className="p-3 font-semibold text-foreground">{ob.tercero}</td>
                       <td className="p-3 text-muted-foreground">{ob.concepto}</td>
+                      <td className="p-3">
+                        {ob.frecuencia && ob.frecuencia !== 'unica' ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 capitalize">
+                            <Repeat className="w-3 h-3" /> {ob.frecuencia}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">Única</span>
+                        )}
+                      </td>
                       <td className="p-3">{formatFechaEsp(ob.fecha_vencimiento)}</td>
                       <td className="p-3 font-medium">{formatFechaEsp(ob.fecha_programada_pago)}</td>
                       <td className="p-3">
@@ -471,7 +523,7 @@ export default function ObligacionesPage() {
           <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between mb-4 border-b border-border pb-3">
               <h3 className="font-bold text-lg text-foreground flex items-center gap-2">
-                <Plus className="w-5 h-5 text-primary" /> Nueva Obligación (CxP)
+                <Plus className="w-5 h-5 text-primary" /> Nueva Obligación / Recurrente
               </h3>
               <button
                 onClick={() => setShowCreateModal(false)}
@@ -493,7 +545,7 @@ export default function ObligacionesPage() {
                 <input
                   type="text"
                   required
-                  placeholder="Ej: Leasing Bancolombia"
+                  placeholder="Ej: Nómina Administrativa o Siemens S.A."
                   value={newObligacion.tercero}
                   onChange={(e) => setNewObligacion({ ...newObligacion, tercero: e.target.value })}
                   className="w-full p-2 rounded-lg border border-input bg-background"
@@ -505,7 +557,7 @@ export default function ObligacionesPage() {
                 <input
                   type="text"
                   required
-                  placeholder="Ej: Cuota 12 vehículo operativo"
+                  placeholder="Ej: Pago de nómina quincenal o Arriendo sede"
                   value={newObligacion.concepto}
                   onChange={(e) => setNewObligacion({ ...newObligacion, concepto: e.target.value })}
                   className="w-full p-2 rounded-lg border border-input bg-background"
@@ -522,8 +574,42 @@ export default function ObligacionesPage() {
                   placeholder="0"
                   value={newObligacion.monto_total}
                   onChange={(e) => setNewObligacion({ ...newObligacion, monto_total: e.target.value })}
-                  className="w-full p-2 rounded-lg border border-input bg-background"
+                  className="w-full p-2 rounded-lg border border-input bg-background font-semibold"
                 />
+              </div>
+
+              {/* Recurrencia (Nómina, Arriendo, Servicios) */}
+              <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold flex items-center gap-1.5 text-foreground">
+                    <Repeat className="w-4 h-4 text-primary" /> ¿Es una obligación recurrente?
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={newObligacion.es_recurrente}
+                    onChange={(e) => setNewObligacion({ ...newObligacion, es_recurrente: e.target.checked })}
+                    className="w-4 h-4 accent-primary rounded"
+                  />
+                </div>
+
+                {newObligacion.es_recurrente && (
+                  <div>
+                    <label className="block font-semibold mb-1">Frecuencia de Repetición</label>
+                    <select
+                      value={newObligacion.frecuencia}
+                      onChange={(e) => setNewObligacion({ ...newObligacion, frecuencia: e.target.value })}
+                      className="w-full p-2 rounded-lg border border-input bg-background font-medium"
+                    >
+                      <option value="semanal">Semanal</option>
+                      <option value="quincenal">Quincenal (Nóminas)</option>
+                      <option value="mensual">Mensual (Arriendos/Servicios)</option>
+                      <option value="anual">Anual (Impuestos/Seguros)</option>
+                    </select>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      Al pagarse completamente, el sistema programará automáticamente el pago del siguiente periodo.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -597,6 +683,11 @@ export default function ObligacionesPage() {
                 <span className="font-semibold">Saldo Actual:</span>{' '}
                 {formatCOP(selectedObligacion.saldo_pendiente)}
               </p>
+              {selectedObligacion.frecuencia && selectedObligacion.frecuencia !== 'unica' && (
+                <p className="text-blue-600 dark:text-blue-400 font-semibold flex items-center gap-1">
+                  <Repeat className="w-3 h-3" /> Obligación Recurrente ({selectedObligacion.frecuencia})
+                </p>
+              )}
             </div>
 
             {formError && (
