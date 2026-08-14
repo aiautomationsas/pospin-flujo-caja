@@ -36,7 +36,6 @@ export default function ObligacionesPage() {
     fecha_vencimiento: new Date().toISOString().split('T')[0],
     fecha_programada_pago: new Date().toISOString().split('T')[0],
     prioridad: 'media',
-    es_recurrente: false,
     frecuencia: 'mensual',
   });
 
@@ -57,7 +56,6 @@ export default function ObligacionesPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // Fetch obligaciones
       const { data: obData, error: obErr } = await supabase
         .from('obligaciones')
         .select('*')
@@ -67,7 +65,6 @@ export default function ObligacionesPage() {
         console.warn('Supabase obligaciones fetch warning:', obErr);
       }
 
-      // Fetch cuentas bancarias
       const { data: cData } = await supabase
         .from('cuentas_bancarias')
         .select('*')
@@ -133,6 +130,20 @@ export default function ObligacionesPage() {
     return current.toISOString().split('T')[0];
   }
 
+  // Change frequency on an existing obligation
+  async function handleChangeFrequency(obId: number, nuevaFrecuencia: string) {
+    try {
+      await supabase
+        .from('obligaciones')
+        .update({ frecuencia: nuevaFrecuencia })
+        .eq('id', obId);
+
+      fetchData();
+    } catch (err) {
+      console.error('Error changing frequency:', err);
+    }
+  }
+
   // Create handler
   async function handleCreateObligacion(e: React.FormEvent) {
     e.preventDefault();
@@ -149,8 +160,6 @@ export default function ObligacionesPage() {
       return;
     }
 
-    const freqVal = newObligacion.es_recurrente ? newObligacion.frecuencia : 'unica';
-
     try {
       const { error } = await supabase.from('obligaciones').insert({
         tercero: newObligacion.tercero,
@@ -160,7 +169,7 @@ export default function ObligacionesPage() {
         fecha_vencimiento: newObligacion.fecha_vencimiento,
         fecha_programada_pago: newObligacion.fecha_programada_pago,
         prioridad: newObligacion.prioridad,
-        frecuencia: freqVal,
+        frecuencia: newObligacion.frecuencia,
         estado: 'pendiente',
       });
 
@@ -179,7 +188,6 @@ export default function ObligacionesPage() {
         fecha_vencimiento: new Date().toISOString().split('T')[0],
         fecha_programada_pago: new Date().toISOString().split('T')[0],
         prioridad: 'media',
-        es_recurrente: false,
         frecuencia: 'mensual',
       });
       fetchData();
@@ -239,14 +247,14 @@ export default function ObligacionesPage() {
           .eq('id', cuentaId);
       }
 
-      // 4. If obligation is fully paid AND is recurring (nómina, arriendo, etc.), generate next period's obligation automatically!
+      // 4. If obligation is fully paid AND is recurring, generate next period's obligation automatically!
       if (nuevoSaldo <= 0 && selectedObligacion.frecuencia && selectedObligacion.frecuencia !== 'unica') {
         const nuevaFechaVenc = calculateNextDate(selectedObligacion.fecha_vencimiento, selectedObligacion.frecuencia);
         const nuevaFechaProg = calculateNextDate(selectedObligacion.fecha_programada_pago, selectedObligacion.frecuencia);
 
         await supabase.from('obligaciones').insert({
           tercero: selectedObligacion.tercero,
-          concepto: `${selectedObligacion.concepto} (Recurrente - Próximo Periodo)`,
+          concepto: `${selectedObligacion.concepto} (Recurrente)`,
           monto_total: selectedObligacion.monto_total,
           saldo_pendiente: selectedObligacion.monto_total,
           fecha_vencimiento: nuevaFechaVenc,
@@ -414,7 +422,7 @@ export default function ObligacionesPage() {
                   <tr>
                     <th className="p-3">Tercero</th>
                     <th className="p-3">Concepto</th>
-                    <th className="p-3">Frecuencia</th>
+                    <th className="p-3">Recurrencia / Frecuencia</th>
                     <th className="p-3">Vencimiento</th>
                     <th className="p-3">Fecha Prog.</th>
                     <th className="p-3">Prioridad</th>
@@ -430,13 +438,21 @@ export default function ObligacionesPage() {
                       <td className="p-3 font-semibold text-foreground">{ob.tercero}</td>
                       <td className="p-3 text-muted-foreground">{ob.concepto}</td>
                       <td className="p-3">
-                        {ob.frecuencia && ob.frecuencia !== 'unica' ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 capitalize">
-                            <Repeat className="w-3 h-3" /> {ob.frecuencia}
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-muted-foreground">Única</span>
-                        )}
+                        <select
+                          value={ob.frecuencia || 'unica'}
+                          onChange={(e) => handleChangeFrequency(ob.id, e.target.value)}
+                          className={`text-xs py-1 px-2 rounded-lg border bg-background font-medium capitalize cursor-pointer ${
+                            ob.frecuencia && ob.frecuencia !== 'unica'
+                              ? 'border-blue-500/50 text-blue-600 dark:text-blue-400 font-semibold'
+                              : 'border-border text-muted-foreground'
+                          }`}
+                        >
+                          <option value="unica">Única</option>
+                          <option value="semanal">🔄 Semanal</option>
+                          <option value="quincenal">🔄 Quincenal (Nómina)</option>
+                          <option value="mensual">🔄 Mensual (Arriendo)</option>
+                          <option value="anual">🔄 Anual (Seguros)</option>
+                        </select>
                       </td>
                       <td className="p-3">{formatFechaEsp(ob.fecha_vencimiento)}</td>
                       <td className="p-3 font-medium">{formatFechaEsp(ob.fecha_programada_pago)}</td>
@@ -578,38 +594,25 @@ export default function ObligacionesPage() {
                 />
               </div>
 
-              {/* Recurrencia (Nómina, Arriendo, Servicios) */}
-              <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold flex items-center gap-1.5 text-foreground">
-                    <Repeat className="w-4 h-4 text-primary" /> ¿Es una obligación recurrente?
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={newObligacion.es_recurrente}
-                    onChange={(e) => setNewObligacion({ ...newObligacion, es_recurrente: e.target.checked })}
-                    className="w-4 h-4 accent-primary rounded"
-                  />
-                </div>
-
-                {newObligacion.es_recurrente && (
-                  <div>
-                    <label className="block font-semibold mb-1">Frecuencia de Repetición</label>
-                    <select
-                      value={newObligacion.frecuencia}
-                      onChange={(e) => setNewObligacion({ ...newObligacion, frecuencia: e.target.value })}
-                      className="w-full p-2 rounded-lg border border-input bg-background font-medium"
-                    >
-                      <option value="semanal">Semanal</option>
-                      <option value="quincenal">Quincenal (Nóminas)</option>
-                      <option value="mensual">Mensual (Arriendos/Servicios)</option>
-                      <option value="anual">Anual (Impuestos/Seguros)</option>
-                    </select>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      Al pagarse completamente, el sistema programará automáticamente el pago del siguiente periodo.
-                    </p>
-                  </div>
-                )}
+              {/* Recurrencia / Frecuencia directa */}
+              <div>
+                <label className="block font-semibold mb-1 flex items-center gap-1.5 text-foreground">
+                  <Repeat className="w-4 h-4 text-primary" /> Frecuencia / Recurrencia *
+                </label>
+                <select
+                  value={newObligacion.frecuencia}
+                  onChange={(e) => setNewObligacion({ ...newObligacion, frecuencia: e.target.value })}
+                  className="w-full p-2 rounded-lg border border-input bg-background font-medium"
+                >
+                  <option value="unica">Única (Pago puntual)</option>
+                  <option value="semanal">🔄 Semanal</option>
+                  <option value="quincenal">🔄 Quincenal (Nóminas)</option>
+                  <option value="mensual">🔄 Mensual (Arriendos / Servicios)</option>
+                  <option value="anual">🔄 Anual (Impuestos / Seguros)</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Si eliges una frecuencia recurrente, el sistema reprogramará automáticamente el próximo pago al completarse este periodo.
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
