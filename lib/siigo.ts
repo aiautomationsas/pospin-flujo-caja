@@ -102,10 +102,18 @@ export class SiigoAPIClient {
 
     try {
       const headers = await this.getHeaders();
-      const response = await fetch(`${this.baseUrl}/v1/customers?identification=${encodeURIComponent(nitOrId)}`, {
+      // Probar busqueda por identification y luego por query
+      let response = await fetch(`${this.baseUrl}/v1/customers?identification=${encodeURIComponent(nitOrId)}`, {
         method: 'GET',
         headers,
       });
+
+      if (!response.ok) {
+        response = await fetch(`${this.baseUrl}/v1/customers?query=${encodeURIComponent(nitOrId)}`, {
+          method: 'GET',
+          headers,
+        });
+      }
 
       if (!response.ok) {
         return null;
@@ -131,6 +139,13 @@ export class SiigoAPIClient {
           else if (typeof cust.person_name === 'object') {
             const p = cust.person_name as Record<string, string>;
             realName = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
+          }
+        }
+
+        if (!realName && Array.isArray(cust.contacts) && cust.contacts.length > 0) {
+          const c = cust.contacts[0];
+          if (c.first_name || c.last_name) {
+            realName = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
           }
         }
 
@@ -309,7 +324,7 @@ function parseCustomerInfo(customerObj: Record<string, unknown>): { name: string
 }
 
 /**
- * Sincroniza facturas y clientes desde SIIGO a Supabase con detalle extendido y consulta directa de Razon Social.
+ * Sincroniza facturas y clientes desde SIIGO a Supabase con detalle extendido y actualización inteligente de clientes.
  */
 export async function sincronizarCarteraSiigo(
   supabaseClient: unknown,
@@ -348,20 +363,26 @@ export async function sincronizarCarteraSiigo(
         }
       }
 
-      // 1. Sincronizar Cliente en Supabase
+      // 1. Sincronizar Cliente en Supabase (Buscar por NIT en campo contacto o por nombre)
       let clienteId: number | null = null;
-      const { data: clienteExistente, error: errCliente } = await supabase
+      const { data: clienteExistente } = await supabase
         .from('clientes')
-        .select('id')
-        .eq('nombre', customerName)
+        .select('id, nombre')
+        .or(`contacto.eq.NIT: ${customerNit},nombre.eq.${customerName}`)
         .limit(1);
-
-      if (errCliente) {
-        console.error('Error consultando cliente en Supabase:', errCliente);
-      }
 
       if (clienteExistente && clienteExistente.length > 0) {
         clienteId = clienteExistente[0].id;
+        // Si el cliente existente tenía un nombre genérico ("Cliente NIT..."), actualizarlo con el nombre real
+        if (
+          clienteExistente[0].nombre.startsWith('Cliente NIT') &&
+          !customerName.startsWith('Cliente NIT')
+        ) {
+          await supabase
+            .from('clientes')
+            .update({ nombre: customerName })
+            .eq('id', clienteId);
+        }
       } else {
         const { data: nuevoCliente, error: errInsertCliente } =
           await supabase

@@ -103,6 +103,7 @@ export async function POST(request: Request) {
       try {
         await supabase.from('recaudos').delete().neq('id', 0);
         await supabase.from('facturas').delete().neq('id', 0);
+        await supabase.from('clientes').delete().neq('id', 0);
       } catch (resetErr) {
         console.warn('Error purgando datos anteriores:', resetErr);
       }
