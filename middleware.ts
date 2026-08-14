@@ -89,8 +89,8 @@ export async function evaluarSesionSupabase(
 export async function middleware(request: NextRequest, client = supabase) {
   const { pathname } = request.nextUrl;
 
-  // Allow bypass for initial testing without login requirements
-  const disableAuth = process.env.NEXT_PUBLIC_DISABLE_AUTH === 'true' || process.env.DISABLE_AUTH === 'true';
+  // Allow bypass for testing unless explicitly required with REQUIRE_AUTH=true or NEXT_PUBLIC_DISABLE_AUTH=false
+  const disableAuth = process.env.NEXT_PUBLIC_DISABLE_AUTH !== 'false' && process.env.REQUIRE_AUTH !== 'true';
   if (disableAuth) {
     return NextResponse.next();
   }
